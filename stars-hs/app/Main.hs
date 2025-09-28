@@ -17,13 +17,14 @@ import qualified SDL.Raw
 import qualified Foreign.Ptr
 import qualified Foreign.Storable
 import qualified Foreign.Marshal.Utils
+import qualified Data.Vector.Storable as Vec
 
 -- Xoshiro256++ based random number generator
-newtype RandomGenerator = RandomGenerator (Word64, Word64, Word64, Word64)
+data RandomGenerator = RandomGenerator Word64 Word64 Word64 Word64
 
 -- Initialize random generator
 randomInit :: Word64 -> RandomGenerator
-randomInit seed = RandomGenerator (head spm, spm !! 1, spm !! 2, spm !! 3) where
+randomInit seed = RandomGenerator (head spm) (spm !! 1) (spm !! 2) (spm !! 3) where
     spm = splitMix64 seed
 
     -- Splitmix64 random number generator
@@ -36,7 +37,7 @@ randomInit seed = RandomGenerator (head spm, spm !! 1, spm !! 2, spm !! 3) where
 
 -- Generate random unsigned 64-bit integer
 randomInt64 :: RandomGenerator -> (Word64, RandomGenerator)
-randomInt64 (RandomGenerator (s0, s1, s2, s3)) = (s0 + rotateL (s0 + s3) 23, RandomGenerator (s0', s1', s2'', s3'')) where
+randomInt64 (RandomGenerator s0 s1 s2 s3) = (s0 + rotateL (s0 + s3) 23, RandomGenerator s0' s1' s2'' s3'') where
     s2' = s2 .^. s0
     s3' = s3 .^. s1
     s1' = s1 .^. s2'
@@ -171,7 +172,7 @@ timerUpdate timer performanceCounter = let
 -- Context structure
 data Context = Context
     { contextWindow    :: SDL.Window
-    , contextStars     :: [Vec3]
+    , contextStars     :: Vec.Vector Vec3
     , contextRandom    :: RandomGenerator
     , contextInput     :: InputAxis
     , contextSpeed     :: Float
@@ -239,36 +240,29 @@ render context = do
 
             -- Clear screen and render stars
             Foreign.Marshal.Utils.fillBytes surfacePixels 0x00 (surfacePitch * surfaceH)
-            traverse_ renderStar (starCoords (contextStars context))
+            traverse_ renderStar (starCoords (Vec.toList (contextStars context)))
 
             SDL.unlockSurface surface
 
     SDL.updateWindowSurface (contextWindow context)
 
--- Move stars by some vector
-moveStars :: RandomGenerator -> Vec3 -> [Vec3] -> ([Vec3], RandomGenerator)
-moveStars initialRandom delta = impl initialRandom where
-        updateStar :: Vec3 -> RandomGenerator -> (Vec3, RandomGenerator)
-        updateStar vec random = if vec3Dot npos npos <= 1.0
-                then (npos, random)
-                else let
-                        (npos', random') = randomUnitVec3 random
-                        dp = negate $ signum $ vec3Dot npos' delta
-                    in
-                        (npos' * vec3FromFloat dp, random')
-            where
-                npos = vec + delta
+moveStars' :: RandomGenerator -> Vec3 -> Vec.Vector Vec3 -> (Vec.Vector Vec3, RandomGenerator)
+moveStars' random delta stars = (stars'', random')
+    where
+        -- Random star generator
+        genRandomStar :: RandomGenerator -> (Vec3, RandomGenerator)
+        genRandomStar rand = (item', rand') where
+            (item, rand') = randomUnitVec3 rand
+            item' = item * (vec3FromFloat . negate . signum $ vec3Dot item delta)
 
-        -- Update star array
-        impl :: RandomGenerator -> [Vec3] -> ([Vec3], RandomGenerator)
-        impl gen [] = ([], gen)
-        impl gen0 (star:rest) = (star':rest', gen2) where
-            (star', gen1) = updateStar star gen0
-            (rest', gen2) = impl gen1 rest
+        starCount = Vec.length stars
+        stars' = Vec.filter (\s -> vec3Dot s s <= 1.0) . Vec.map (+ delta) $ stars
+        (newStars, random') = genRandomSeq genRandomStar (starCount - Vec.length stars') random
+        stars'' = stars' Vec.++ Vec.fromList newStars
 
--- Rotate stars along Y axis
-rotateStarsY :: Float -> [Vec3] -> [Vec3]
-rotateStarsY angle = map rotateStar where
+
+rotateStarsY' :: Float -> Vec.Vector Vec3 -> Vec.Vector Vec3
+rotateStarsY' angle = Vec.map rotateStar where
     sinA = sin angle
     cosA = cos angle
     rotateStar :: Vec3 -> Vec3
@@ -316,8 +310,8 @@ updateContext context inputDelta performanceCounter = let
         stars0 = contextStars context
         stars1 = if abs (inputAxisRotation input) < 0.1
             then stars0
-            else rotateStarsY (rotationSpeed * deltaTime * inputAxisRotation input) stars0
-        (stars2, random) = moveStars (contextRandom context) starDelta stars1
+            else rotateStarsY' (rotationSpeed * deltaTime * inputAxisRotation input) stars0
+        (stars2, random) = moveStars' (contextRandom context) starDelta stars1
     in
         Context
             { contextWindow = contextWindow context
@@ -396,7 +390,7 @@ main = do
 
     mainLoop (Context
         { contextWindow = window
-        , contextStars = stars
+        , contextStars = Vec.fromList stars
         , contextRandom = random
         , contextInput = inputAxisZero
         , contextSpeed = 0.47
