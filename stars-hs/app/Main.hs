@@ -4,21 +4,20 @@ module Main (main) where
 
 import Control.Monad (when, unless)
 import Control.Monad.ST (runST)
-import Data.Foldable (traverse_)
-import Data.Word
-import Data.Int
 import Data.Bits
+import Data.Foldable (traverse_)
+import Data.Int (Int32)
 import Data.Ord (clamp)
+import Data.Word (Word8, Word64)
+import Foreign.Marshal.Utils
+import Foreign.Ptr
+import Foreign.Storable
 import Text.Printf (printf)
-import qualified Data.Text
-import qualified Foreign
+import qualified Data.Text as Text
+import qualified Data.Vector.Algorithms.Intro as VecSort
+import qualified Data.Vector.Storable as Vec
 import qualified SDL
 import qualified SDL.Raw
-import qualified Foreign.Ptr
-import qualified Foreign.Storable
-import qualified Foreign.Marshal.Utils
-import qualified Data.Vector.Storable as Vec
-import qualified Data.Vector.Algorithms.Intro as VecSort
 
 -- Xoshiro256++ based random number generator
 data RandomGenerator = RandomGenerator Word64 Word64 Word64 Word64
@@ -52,63 +51,63 @@ randomUnitFloat gen = (realToFrac double, gen') where
     (int, gen') = randomInt64 gen
     double = (fromIntegral int :: Double) / (fromIntegral (maxBound :: Word64) :: Double)
 
+    -- On-screen 3-component vector
 data ScreenVec = ScreenVec Int32 Int32 Float
 
-instance Foreign.Storable ScreenVec where
+instance Storable ScreenVec where
     sizeOf _ = 12
     alignment _ = 4
 
-    peek ptr = do
-        let
-            fptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
-            iptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Int32
-
-        ScreenVec
-            <$> Foreign.Storable.peekElemOff iptr 0
-            <*> Foreign.Storable.peekElemOff iptr 1
-            <*> Foreign.Storable.peekElemOff fptr 2
+    peek ptr = ScreenVec
+        <$> peekElemOff (castPtr ptr :: Ptr Int32) 0
+        <*> peekElemOff (castPtr ptr :: Ptr Int32) 1
+        <*> peekElemOff (castPtr ptr :: Ptr Float) 2
 
     poke ptr (ScreenVec x y z) = do
-        let
-            fptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
-            iptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Int32
-        Foreign.Storable.pokeElemOff iptr 0 x
-        Foreign.Storable.pokeElemOff iptr 1 y
-        Foreign.Storable.pokeElemOff fptr 2 z
+        pokeElemOff (castPtr ptr :: Ptr Int32) 0 x
+        pokeElemOff (castPtr ptr :: Ptr Int32) 1 y
+        pokeElemOff (castPtr ptr :: Ptr Float) 2 z
 
 -- 3-component vector
 data Vec3 = Vec3 Float Float Float
 
 -- Make Vec3 storable
-instance Foreign.Storable Vec3 where
+instance Storable Vec3 where
     sizeOf _ = 12
     alignment _ = 4
 
-    peek ptr = do
-        let cptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
-        Vec3
-            <$> Foreign.Storable.peekElemOff cptr 0
-            <*> Foreign.Storable.peekElemOff cptr 1
-            <*> Foreign.Storable.peekElemOff cptr 2
+    peek ptr = Vec3
+        <$> peekElemOff cptr 0
+        <*> peekElemOff cptr 1
+        <*> peekElemOff cptr 2
+            where cptr = castPtr ptr :: Ptr Float
 
     poke ptr (Vec3 x y z) = do
-        let cptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
-        Foreign.Storable.pokeElemOff cptr 0 x
-        Foreign.Storable.pokeElemOff cptr 1 y
-        Foreign.Storable.pokeElemOff cptr 2 z
+        let cptr = castPtr ptr :: Ptr Float
+        pokeElemOff cptr 0 x
+        pokeElemOff cptr 1 y
+        pokeElemOff cptr 2 z
 
 -- Implement basic vector operations
 instance Num Vec3 where
-    (Vec3 lx ly lz) + ((Vec3 rx ry rz)) = Vec3 (lx + rx) (ly + ry) (lz + rz)
-    (Vec3 lx ly lz) * ((Vec3 rx ry rz)) = Vec3 (lx * rx) (ly * ry) (lz * rz)
-    abs (Vec3 x y z) = Vec3 (abs x) (abs y) (abs z)
-    signum (Vec3 x y z) = Vec3 (signum x) (signum y) (signum z)
-    negate (Vec3 x y z) = Vec3 (-x) (-y) (-z)
-    fromInteger inum = Vec3 fnum fnum fnum where fnum = fromInteger inum :: Float
+    (+) = vec3Zip (+)
+    (*) = vec3Zip (*)
+    abs = vec3Map abs
+    signum = vec3Map signum
+    negate = vec3Map negate
+    fromInteger = vec3FromFloat . fromInteger
 
 -- Vec3 from single float
 vec3FromFloat :: Float -> Vec3
 vec3FromFloat f = Vec3 f f f
+
+-- Map 3-component vector
+vec3Map :: (Float -> Float) -> Vec3 -> Vec3
+vec3Map f (Vec3 x y z) = Vec3 (f x) (f y) (f z)
+
+-- Zip two 3-component vectors with some operator
+vec3Zip :: (Float -> Float -> Float) -> Vec3 -> Vec3 -> Vec3
+vec3Zip f (Vec3 lx ly lz) (Vec3 rx ry rz) = Vec3 (f lx rx) (f ly ry) (f lz rz)
 
 -- 3-component vector dot product
 vec3Dot :: Vec3 -> Vec3 -> Float
@@ -126,11 +125,14 @@ randomUnitVec3 gen0 = (vec3FromSpherical (2 * pi * ksi2) (acos (2 * ksi1 - 1)), 
 
 -- Random vector with uniform distribution **in** unit sphere
 randomSphereVec3 :: RandomGenerator -> (Vec3, RandomGenerator)
-randomSphereVec3 gen0 = if vec3Dot v v <= 1.0 then (v, gen3) else randomSphereVec3 gen3 where
+randomSphereVec3 gen0 = result where
     (x, gen1) = randomUnitFloat gen0
     (y, gen2) = randomUnitFloat gen1
     (z, gen3) = randomUnitFloat gen2
-    v = Vec3 x y z * 2 - 1
+    v = vec3Map (\c -> c * 2 - 1) (Vec3 x y z)
+    result = if vec3Dot v v <= 1.0
+        then (v, gen3)
+        else randomSphereVec3 gen3
 
 -- Time controller (time, deltaTime and FPS counter)
 data Timer = Timer
@@ -163,36 +165,36 @@ timerInit performanceCounter performanceFrequency = Timer
 
 -- Update timer with new performanceCounter value
 timerUpdate :: Timer -> Word64 -> Timer
-timerUpdate timer performanceCounter = let
-        getFloatDuration :: Word64 -> Word64 -> Float
-        getFloatDuration begin end = realToFrac (delta / norm) :: Float where
-                delta = fromIntegral (end - begin) :: Double
-                norm = fromIntegral (timerFrequency timer) :: Double
+timerUpdate timer performanceCounter = timer' where
+    getFloatDuration :: Word64 -> Word64 -> Float
+    getFloatDuration begin end = realToFrac (delta / norm) :: Float where
+            delta = fromIntegral (end - begin) :: Double
+            norm = fromIntegral (timerFrequency timer) :: Double
 
-        deltaTime = getFloatDuration (timerNow timer) performanceCounter
-        time = getFloatDuration (timerStart timer) performanceCounter
+    deltaTime = getFloatDuration (timerNow timer) performanceCounter
+    time = getFloatDuration (timerStart timer) performanceCounter
 
-        fpsUpdateRequired = performanceCounter - timerFpsLastMeasure timer > timerFpsDuration timer
-        (fps, fpsFrameCount, fpsLastMeasure) = if fpsUpdateRequired
-            then let
-                    duration = getFloatDuration (timerFpsLastMeasure timer) performanceCounter
-                    newFps = (fromIntegral (timerFpsFrameCount timer) :: Float) / duration
-                in
-                    (newFps, 0, performanceCounter)
-            else (timerFps timer, 1 + timerFpsFrameCount timer, timerFpsLastMeasure timer)
-    in
-        Timer
-            { timerFrequency = timerFrequency timer
-            , timerStart = timerStart timer
-            , timerNow = performanceCounter
-            , timerDeltaTime = deltaTime
-            , timerTime = time
-            , timerFpsFrameCount = fpsFrameCount
-            , timerFpsDuration = timerFpsDuration timer
-            , timerFpsLastMeasure = fpsLastMeasure
-            , timerFps = fps
-            , timerFpsIsNew = fpsUpdateRequired
-            }
+    fpsUpdateRequired = performanceCounter - timerFpsLastMeasure timer > timerFpsDuration timer
+    (fps, fpsFrameCount, fpsLastMeasure) = if fpsUpdateRequired
+        then let
+                duration = getFloatDuration (timerFpsLastMeasure timer) performanceCounter
+                newFps = (fromIntegral (timerFpsFrameCount timer) :: Float) / duration
+            in
+                (newFps, 0, performanceCounter)
+        else (timerFps timer, 1 + timerFpsFrameCount timer, timerFpsLastMeasure timer)
+
+    timer' = Timer
+        { timerFrequency = timerFrequency timer
+        , timerStart = timerStart timer
+        , timerNow = performanceCounter
+        , timerDeltaTime = deltaTime
+        , timerTime = time
+        , timerFpsFrameCount = fpsFrameCount
+        , timerFpsDuration = timerFpsDuration timer
+        , timerFpsLastMeasure = fpsLastMeasure
+        , timerFps = fps
+        , timerFpsIsNew = fpsUpdateRequired
+        }
 
 -- Context structure
 data Context = Context
@@ -210,7 +212,7 @@ render context = do
     -- Get surface and verify it's format for being sufficient
     surface <- SDL.getWindowSurface (contextWindow context)
     SDL.SurfacePixelFormat formatPtr <- SDL.surfaceFormat surface
-    pixelFormat <- Foreign.Storable.peek formatPtr
+    pixelFormat <- peek formatPtr
 
     if SDL.Raw.pixelFormatFormat pixelFormat /= SDL.Raw.SDL_PIXELFORMAT_RGB888
         then return ()
@@ -252,7 +254,7 @@ render context = do
                 -- Render single star
                 renderStar :: ScreenVec -> IO ()
                 renderStar (ScreenVec xs ys d2) = drawBox size basePtr where
-                    basePtr = Foreign.Ptr.plusPtr surfacePixels (fromIntegral (ys * surfacePitch + xs * 4) :: Int)
+                    basePtr = plusPtr surfacePixels (fromIntegral (ys * surfacePitch + xs * 4) :: Int)
 
                     size :: Int32
                     size | d2 < 0.0025 = 4
@@ -261,14 +263,14 @@ render context = do
                          | otherwise = 1
                     color = round (255 * (1 - d2)) :: Word8
 
-                    drawBox :: Int32 -> Foreign.Ptr () -> IO ()
+                    drawBox :: Int32 -> Ptr () -> IO ()
                     drawBox 0 _ = return ()
                     drawBox lineCount ptr = do
-                        Foreign.Marshal.Utils.fillBytes ptr color (fromIntegral (size * 4) :: Int)
-                        drawBox (lineCount - 1) (Foreign.Ptr.plusPtr ptr (fromIntegral surfacePitch :: Int))
+                        fillBytes ptr color (fromIntegral (size * 4) :: Int)
+                        drawBox (lineCount - 1) (plusPtr ptr (fromIntegral surfacePitch :: Int))
 
             -- Clear screen and render stars
-            Foreign.Marshal.Utils.fillBytes surfacePixels 0x00 (fromIntegral (surfacePitch * surfaceH) :: Int)
+            fillBytes surfacePixels 0x00 (fromIntegral (surfacePitch * surfaceH) :: Int)
             traverse_ renderStar (Vec.toList (starCoords (contextStars context)))
 
             SDL.unlockSurface surface
@@ -276,19 +278,20 @@ render context = do
     SDL.updateWindowSurface (contextWindow context)
 
 moveStars :: RandomGenerator -> Vec3 -> Vec.Vector Vec3 -> (Vec.Vector Vec3, RandomGenerator)
-moveStars random delta stars = (stars'', random')
-    where
-        -- Random star generator
-        genRandomStar :: RandomGenerator -> (Vec3, RandomGenerator)
-        genRandomStar rand = (item', rand') where
-            (item, rand') = randomUnitVec3 rand
-            item' = item * (vec3FromFloat . negate . signum $ vec3Dot item delta)
+moveStars random delta stars = (stars'', random') where
 
-        starCount = Vec.length stars
-        stars' = Vec.filter (\s -> vec3Dot s s <= 1.0) . Vec.map (+ delta) $ stars
+    -- Random star generator
+    genRandomStar :: RandomGenerator -> (Vec3, RandomGenerator)
+    genRandomStar rand = (item', rand') where
+        (item, rand') = randomUnitVec3 rand
+        item' = item * (vec3FromFloat . negate . signum $ vec3Dot item delta)
 
-        (newStars, random') = genRandomSeq genRandomStar (starCount - Vec.length stars') random
-        stars'' = stars' Vec.++ Vec.fromList newStars
+    starCount = Vec.length stars
+    stars' = Vec.filter (\s -> vec3Dot s s <= 1.0) . Vec.map (+ delta) $ stars
+
+    (newStars, random') = genRandomSeq genRandomStar (starCount - Vec.length stars') random
+    stars'' = stars' Vec.++ Vec.fromList newStars
+
 
 rotateStarsY :: Float -> Vec.Vector Vec3 -> Vec.Vector Vec3
 rotateStarsY angle = Vec.map rotateStar where
@@ -354,7 +357,7 @@ updateContext context inputDelta performanceCounter = context' where
 -- Handle array of the input events
 handleEvents :: [SDL.Event] -> InputAxis -> (Bool, InputAxis)
 handleEvents [] input = (False, input)
-handleEvents (event:rest) input = (eQuit || quit', input') where
+handleEvents (event : restEvents) input = (eQuit || quit', input') where
     (eQuit, eInput) = case SDL.eventPayload event of
         SDL.QuitEvent -> (True, inputAxisZero)
 
@@ -380,7 +383,7 @@ handleEvents (event:rest) input = (eQuit || quit', input') where
 
         _ -> (False, inputAxisZero)
 
-    (quit', input') = handleEvents rest (inputAxisCompose input eInput)
+    (quit', input') = handleEvents restEvents (inputAxisCompose input eInput)
 
 -- Main loop function
 mainLoop :: Context -> IO ()
@@ -389,32 +392,35 @@ mainLoop context = do
     let (doQuit, inputDelta) = handleEvents events inputAxisZero
 
     -- Continue if not quit
-    unless doQuit (do
+    unless doQuit $ do
         performanceCounter <- SDL.Raw.getPerformanceCounter
         let newCtx = updateContext context inputDelta performanceCounter
 
         when (timerFpsIsNew (contextTimer newCtx)) (printf "FPS: %f\n" (timerFps (contextTimer newCtx)))
 
         render newCtx
-        mainLoop newCtx)
+        mainLoop newCtx
 
--- Generate random finite sequence of some type
+-- Generate random finite sequence of some items
 genRandomSeq :: (RandomGenerator -> (a, RandomGenerator)) -> Int -> RandomGenerator -> ([a], RandomGenerator)
-genRandomSeq _ 0 rnd = ([], rnd)
-genRandomSeq gen count rnd = (item:rest, rnd2) where
-    (item, rnd1) = gen rnd
-    (rest, rnd2) = genRandomSeq gen (count - 1) rnd1
+genRandomSeq gen = impl where
+    impl 0 rnd = ([], rnd)
+    impl count rnd0 = (item : rest, rnd2) where
+        (item, rnd1) = gen rnd0
+        (rest, rnd2) = impl (count - 1) rnd1
 
 main :: IO ()
 main = do
     -- Initialize SDL and create window
-    SDL.initialize [SDL.InitVideo, SDL.InitEvents]
-    window <- SDL.createWindow (Data.Text.pack "stars-hs") SDL.defaultWindow
+    SDL.initialize [SDL.InitVideo]
+    window <- SDL.createWindow (Text.pack "stars-hs") SDL.defaultWindow
 
-    -- Initialize context and run main loop
-    performanceCounter <- SDL.Raw.getPerformanceCounter
-    performanceFrequency <- SDL.Raw.getPerformanceFrequency
+    -- Initialize timer
+    timer <- timerInit
+        <$> SDL.Raw.getPerformanceCounter
+        <*> SDL.Raw.getPerformanceFrequency
 
+    -- Construct stars and random generator
     let (stars, random) = genRandomSeq randomSphereVec3 8192 (randomInit 47)
 
     mainLoop (Context
@@ -423,7 +429,7 @@ main = do
         , contextRandom = random
         , contextInput = inputAxisZero
         , contextSpeed = 0.47
-        , contextTimer = timerInit performanceCounter performanceFrequency
+        , contextTimer = timer
         })
 
     -- Destroy window and deinitialize SDL
