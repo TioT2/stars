@@ -6,6 +6,7 @@ import Control.Monad (when, unless)
 import Control.Monad.ST (runST)
 import Data.Bits
 import Data.Foldable (traverse_)
+import Data.Function
 import Data.Int (Int32)
 import Data.Ord (clamp)
 import Data.Word (Word8, Word64)
@@ -19,12 +20,12 @@ import qualified Data.Vector.Storable as Vec
 import qualified SDL
 import qualified SDL.Raw
 
--- Xoshiro256++ based random number generator
-data RandomGenerator = RandomGenerator Word64 Word64 Word64 Word64
+-- Xoshiro256++ based random number generator current state
+data RandomState = RandomState Word64 Word64 Word64 Word64
 
--- Initialize random generator
-randomInit :: Word64 -> RandomGenerator
-randomInit seed = RandomGenerator (head spm) (spm !! 1) (spm !! 2) (spm !! 3) where
+-- Initialize random state
+randomInit :: Word64 -> RandomState
+randomInit seed = RandomState (head spm) (spm !! 1) (spm !! 2) (spm !! 3) where
     spm = splitMix64 seed
 
     -- Splitmix64 random number generator
@@ -36,8 +37,8 @@ randomInit seed = RandomGenerator (head spm) (spm !! 1) (spm !! 2) (spm !! 3) wh
         r2 =  r1 .^. (r1 .>>. 31)
 
 -- Generate random unsigned 64-bit integer
-randomInt64 :: RandomGenerator -> (Word64, RandomGenerator)
-randomInt64 (RandomGenerator s0 s1 s2 s3) = (s0 + rotateL (s0 + s3) 23, RandomGenerator s0' s1' s2'' s3'') where
+randomInt64 :: RandomState -> (Word64, RandomState)
+randomInt64 (RandomState s0 s1 s2 s3) = (s0 + rotateL (s0 + s3) 23, RandomState s0' s1' s2'' s3'') where
     s2' = s2 .^. s0
     s3' = s3 .^. s1
     s1' = s1 .^. s2'
@@ -46,26 +47,26 @@ randomInt64 (RandomGenerator s0 s1 s2 s3) = (s0 + rotateL (s0 + s3) 23, RandomGe
     s3'' = rotateL s3' 45
 
 -- Generate random float in [0..1] range
-randomUnitFloat :: RandomGenerator -> (Float, RandomGenerator)
+randomUnitFloat :: RandomState -> (Float, RandomState)
 randomUnitFloat gen = (realToFrac double, gen') where
     (int, gen') = randomInt64 gen
     double = (fromIntegral int :: Double) / (fromIntegral (maxBound :: Word64) :: Double)
 
     -- On-screen 3-component vector
-data ScreenVec = ScreenVec Int32 Int32 Float
+data ScreenVec = ScreenVec Int Int Float
 
 instance Storable ScreenVec where
     sizeOf _ = 12
     alignment _ = 4
 
     peek ptr = ScreenVec
-        <$> peekElemOff (castPtr ptr :: Ptr Int32) 0
-        <*> peekElemOff (castPtr ptr :: Ptr Int32) 1
+        <$> fmap fromIntegral (peekElemOff (castPtr ptr :: Ptr Int32) 0)
+        <*> fmap fromIntegral (peekElemOff (castPtr ptr :: Ptr Int32) 1)
         <*> peekElemOff (castPtr ptr :: Ptr Float) 2
 
     poke ptr (ScreenVec x y z) = do
-        pokeElemOff (castPtr ptr :: Ptr Int32) 0 x
-        pokeElemOff (castPtr ptr :: Ptr Int32) 1 y
+        pokeElemOff (castPtr ptr :: Ptr Int32) 0 (fromIntegral x)
+        pokeElemOff (castPtr ptr :: Ptr Int32) 1 (fromIntegral y)
         pokeElemOff (castPtr ptr :: Ptr Float) 2 z
 
 -- 3-component vector
@@ -118,13 +119,13 @@ vec3FromSpherical :: Float -> Float -> Vec3
 vec3FromSpherical phi theta = Vec3 (cos phi * sin theta) (sin phi * sin theta) (cos theta)
 
 -- Random vector with uniform distribution **on** unit sphere
-randomUnitVec3 :: RandomGenerator -> (Vec3, RandomGenerator)
+randomUnitVec3 :: RandomState -> (Vec3, RandomState)
 randomUnitVec3 gen0 = (vec3FromSpherical (2 * pi * ksi2) (acos (2 * ksi1 - 1)), gen2) where
     (ksi1, gen1) = randomUnitFloat gen0
     (ksi2, gen2) = randomUnitFloat gen1
 
 -- Random vector with uniform distribution **in** unit sphere
-randomSphereVec3 :: RandomGenerator -> (Vec3, RandomGenerator)
+randomSphereVec3 :: RandomState -> (Vec3, RandomState)
 randomSphereVec3 gen0 = result where
     (x, gen1) = randomUnitFloat gen0
     (y, gen2) = randomUnitFloat gen1
@@ -168,8 +169,8 @@ timerUpdate :: Timer -> Word64 -> Timer
 timerUpdate timer performanceCounter = timer' where
     getFloatDuration :: Word64 -> Word64 -> Float
     getFloatDuration begin end = realToFrac (delta / norm) :: Float where
-            delta = fromIntegral (end - begin) :: Double
-            norm = fromIntegral (timerFrequency timer) :: Double
+        delta = fromIntegral (end - begin) :: Double
+        norm = fromIntegral (timerFrequency timer) :: Double
 
     deltaTime = getFloatDuration (timerNow timer) performanceCounter
     time = getFloatDuration (timerStart timer) performanceCounter
@@ -183,14 +184,11 @@ timerUpdate timer performanceCounter = timer' where
                 (newFps, 0, performanceCounter)
         else (timerFps timer, 1 + timerFpsFrameCount timer, timerFpsLastMeasure timer)
 
-    timer' = Timer
-        { timerFrequency = timerFrequency timer
-        , timerStart = timerStart timer
-        , timerNow = performanceCounter
+    timer' = timer
+        { timerNow = performanceCounter
         , timerDeltaTime = deltaTime
         , timerTime = time
         , timerFpsFrameCount = fpsFrameCount
-        , timerFpsDuration = timerFpsDuration timer
         , timerFpsLastMeasure = fpsLastMeasure
         , timerFps = fps
         , timerFpsIsNew = fpsUpdateRequired
@@ -198,90 +196,85 @@ timerUpdate timer performanceCounter = timer' where
 
 -- Context structure
 data Context = Context
-    { contextWindow    :: SDL.Window
-    , contextStars     :: Vec.Vector Vec3
-    , contextRandom    :: RandomGenerator
-    , contextInput     :: InputAxis
-    , contextSpeed     :: Float
-    , contextTimer     :: Timer
+    { contextWindow :: SDL.Window
+    , contextStars  :: Vec.Vector Vec3
+    , contextRandom :: RandomState
+    , contextInput  :: InputAxis
+    , contextSpeed  :: Float
+    , contextTimer  :: Timer
     }
 
 -- Rendering function
 render :: Context -> IO ()
 render context = do
-    -- Get surface and verify it's format for being sufficient
     surface <- SDL.getWindowSurface (contextWindow context)
     SDL.SurfacePixelFormat formatPtr <- SDL.surfaceFormat surface
     pixelFormat <- peek formatPtr
 
-    if SDL.Raw.pixelFormatFormat pixelFormat /= SDL.Raw.SDL_PIXELFORMAT_RGB888
-        then return ()
-        else do
-            SDL.V2 cSurfaceW cSurfaceH <- SDL.surfaceDimensions surface
-            SDL.lockSurface surface
-            surfacePixels <- SDL.surfacePixels surface
+    when (SDL.Raw.pixelFormatFormat pixelFormat == SDL.Raw.SDL_PIXELFORMAT_RGB888) $ do
+        SDL.V2 cSurfaceW cSurfaceH <- SDL.surfaceDimensions surface
+        SDL.lockSurface surface
+        surfacePixels <- SDL.surfacePixels surface
 
-            let
-                surfaceW = fromIntegral cSurfaceW :: Int32
-                surfaceH = fromIntegral cSurfaceH :: Int32
-                surfaceBPP = fromIntegral (SDL.Raw.pixelFormatBytesPerPixel pixelFormat) :: Int32
-                surfacePitch = surfaceW * surfaceBPP
+        let
+            surfaceW = fromIntegral cSurfaceW
+            surfaceH = fromIntegral cSurfaceH
+            surfaceBPP = fromIntegral (SDL.Raw.pixelFormatBytesPerPixel pixelFormat)
+            surfacePitch = surfaceW * surfaceBPP
 
-                clip = 0.5 :: Float
-                wFloat = fromIntegral surfaceW :: Float
-                hFloat = fromIntegral surfaceH :: Float
-                halfW = wFloat / 2
-                halfH = hFloat / 2
-                whScale = sqrt ((wFloat * wFloat + hFloat * hFloat) / (1 - clip * clip))
-                xyMul = clip * wFloat * hFloat / whScale
+            clip = 0.5 :: Float
+            wFloat = fromIntegral surfaceW :: Float
+            hFloat = fromIntegral surfaceH :: Float
+            halfW = wFloat / 2
+            halfH = hFloat / 2
+            whScale = sqrt ((wFloat * wFloat + hFloat * hFloat) / (1 - clip * clip))
+            xyMul = clip * wFloat * hFloat / whScale
 
-                -- Generate star coordinate vector
-                starCoords :: Vec.Vector Vec3 -> Vec.Vector ScreenVec
-                starCoords =
-                    (\stars -> runST $ do
-                        mutStars <- Vec.thaw stars
-                        VecSort.sortBy (\(ScreenVec _ _ dl2) (ScreenVec _ _ dr2) -> compare dl2 dr2) mutStars
-                        Vec.freeze mutStars
-                    )
-                    . Vec.filter (\(ScreenVec xs ys _) -> xs >= 0 && ys >= 0 && xs <= surfaceW - 4 && ys <= surfaceH - 4)
-                    . Vec.map (\(Vec3 x y z) -> ScreenVec
-                        (round (halfW + xyMul * x / z))
-                        (round (halfH - xyMul * y / z))
-                        (x * x + y * y + z * z)
-                    )
-                    . Vec.filter (\(Vec3 _ _ z) -> z > 0)
+            -- Generate star coordinate vector
+            starCoords :: Vec.Vector Vec3 -> Vec.Vector ScreenVec
+            starCoords =
+                (\stars -> runST $ do
+                    mutStars <- Vec.thaw stars
+                    VecSort.sortBy (\(ScreenVec _ _ dl2) (ScreenVec _ _ dr2) -> compare dr2 dl2) mutStars
+                    Vec.freeze mutStars
+                )
+                . Vec.filter (\(ScreenVec xs ys _) -> xs >= 0 && ys >= 0 && xs <= surfaceW - 4 && ys <= surfaceH - 4)
+                . Vec.map (\(Vec3 x y z) -> ScreenVec
+                    (round (halfW + xyMul * x / z))
+                    (round (halfH - xyMul * y / z))
+                    (x * x + y * y + z * z)
+                )
+                . Vec.filter (\(Vec3 _ _ z) -> z > 0)
 
-                -- Render single star
-                renderStar :: ScreenVec -> IO ()
-                renderStar (ScreenVec xs ys d2) = drawBox size basePtr where
-                    basePtr = plusPtr surfacePixels (fromIntegral (ys * surfacePitch + xs * 4) :: Int)
+            -- Render single star
+            renderStar :: ScreenVec -> IO ()
+            renderStar (ScreenVec xs ys d2) = drawBox size basePtr where
+                basePtr = plusPtr surfacePixels (ys * surfacePitch + xs * 4)
 
-                    size :: Int32
-                    size | d2 < 0.0025 = 4
-                         | d2 < 0.01 = 3
-                         | d2 < 0.09 = 2
-                         | otherwise = 1
-                    color = round (255 * (1 - d2)) :: Word8
+                size | d2 < 0.0025 = 4
+                     | d2 < 0.01 = 3
+                     | d2 < 0.09 = 2
+                     | otherwise = 1
+                color = round (255 * (1 - d2)) :: Word8
 
-                    drawBox :: Int32 -> Ptr () -> IO ()
-                    drawBox 0 _ = return ()
-                    drawBox lineCount ptr = do
-                        fillBytes ptr color (fromIntegral (size * 4) :: Int)
-                        drawBox (lineCount - 1) (plusPtr ptr (fromIntegral surfacePitch :: Int))
+                drawBox :: Int -> Ptr () -> IO ()
+                drawBox count ptr = when (count /= 0) $ do
+                    fillBytes ptr color (size * 4)
+                    drawBox (count - 1) (plusPtr ptr surfacePitch)
 
-            -- Clear screen and render stars
-            fillBytes surfacePixels 0x00 (fromIntegral (surfacePitch * surfaceH) :: Int)
-            traverse_ renderStar (Vec.toList (starCoords (contextStars context)))
+        -- Clear screen and render stars
+        fillBytes surfacePixels 0x00 (surfacePitch * surfaceH)
+        traverse_ renderStar (Vec.toList (starCoords (contextStars context)))
 
-            SDL.unlockSurface surface
+        SDL.unlockSurface surface
 
     SDL.updateWindowSurface (contextWindow context)
 
-moveStars :: RandomGenerator -> Vec3 -> Vec.Vector Vec3 -> (Vec.Vector Vec3, RandomGenerator)
+moveStars :: RandomState -> Vec3 -> Vec.Vector Vec3 -> (Vec.Vector Vec3, RandomState)
 moveStars random delta stars = (stars'', random') where
 
     -- Random star generator
-    genRandomStar :: RandomGenerator -> (Vec3, RandomGenerator)
+    genRandomStar :: RandomState -> (Vec3, RandomState)
     genRandomStar rand = (item', rand') where
         (item, rand') = randomUnitVec3 rand
         item' = item * (vec3FromFloat . negate . signum $ vec3Dot item delta)
@@ -291,7 +284,6 @@ moveStars random delta stars = (stars'', random') where
 
     (newStars, random') = genRandomSeq genRandomStar (starCount - Vec.length stars') random
     stars'' = stars' Vec.++ Vec.fromList newStars
-
 
 rotateStarsY :: Float -> Vec.Vector Vec3 -> Vec.Vector Vec3
 rotateStarsY angle = Vec.map rotateStar where
@@ -339,15 +331,13 @@ updateContext context inputDelta performanceCounter = context' where
     moveSpeed = contextSpeed context + deltaTime * inputAxisAcceleration input * accelerationSpeed
     starDelta = Vec3 (inputAxisMoveX input) (inputAxisMoveY input) 1 * vec3FromFloat (-(moveSpeed * deltaTime))
 
-    stars0 = contextStars context
-    stars1 = if abs (inputAxisRotation input) < 0.1
-        then stars0
-        else rotateStarsY (rotationSpeed * deltaTime * inputAxisRotation input) stars0
-    (stars2, random) = moveStars (contextRandom context) starDelta stars1
+    (stars', random) = moveStars (contextRandom context) starDelta
+        . applyWhen (abs (inputAxisRotation input) >= 0.1) (rotateStarsY (rotationSpeed * deltaTime * inputAxisRotation input))
+        . contextStars $ context
 
     context' = Context
         { contextWindow = contextWindow context
-        , contextStars = stars2
+        , contextStars = stars'
         , contextRandom = random
         , contextInput = input
         , contextSpeed = moveSpeed
@@ -402,7 +392,7 @@ mainLoop context = do
         mainLoop newCtx
 
 -- Generate random finite sequence of some items
-genRandomSeq :: (RandomGenerator -> (a, RandomGenerator)) -> Int -> RandomGenerator -> ([a], RandomGenerator)
+genRandomSeq :: (RandomState -> (a, RandomState)) -> Int -> RandomState -> ([a], RandomState)
 genRandomSeq gen = impl where
     impl 0 rnd = ([], rnd)
     impl count rnd0 = (item : rest, rnd2) where
@@ -420,9 +410,10 @@ main = do
         <$> SDL.Raw.getPerformanceCounter
         <*> SDL.Raw.getPerformanceFrequency
 
-    -- Construct stars and random generator
+    -- Construct stars and initial random state
     let (stars, random) = genRandomSeq randomSphereVec3 8192 (randomInit 47)
 
+    -- Run!
     mainLoop (Context
         { contextWindow = window
         , contextStars = Vec.fromList stars
