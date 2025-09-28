@@ -51,7 +51,7 @@ randomUnitFloat gen = (realToFrac double, gen') where
     double = (fromIntegral int :: Double) / (fromIntegral (maxBound :: Word64) :: Double)
 
 -- 3-component vector
-newtype Vec3 = Vec3 (Float, Float, Float)
+data Vec3 = Vec3 Float Float Float
 
 -- Make Vec3 storable
 instance Foreign.Storable Vec3 where
@@ -63,9 +63,9 @@ instance Foreign.Storable Vec3 where
         x <- Foreign.Storable.peekElemOff cptr 0
         y <- Foreign.Storable.peekElemOff cptr 4
         z <- Foreign.Storable.peekElemOff cptr 8
-        return (Vec3 (x, y, z))
+        return (Vec3 x y z)
 
-    poke ptr (Vec3 (x, y, z)) = do
+    poke ptr (Vec3 x y z) = do
         let cptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
         Foreign.Storable.pokeElemOff cptr 0 x
         Foreign.Storable.pokeElemOff cptr 4 y
@@ -73,24 +73,24 @@ instance Foreign.Storable Vec3 where
 
 -- Implement basic vector operations
 instance Num Vec3 where
-    (Vec3 (lx, ly, lz)) + ((Vec3 (rx, ry, rz))) = Vec3 (lx + rx, ly + ry, lz + rz)
-    (Vec3 (lx, ly, lz)) * ((Vec3 (rx, ry, rz))) = Vec3 (lx * rx, ly * ry, lz * rz)
-    abs (Vec3 (x, y, z)) = Vec3 (abs x, abs y, abs z)
-    signum (Vec3 (x, y, z)) = Vec3 (signum x, signum y, signum z)
-    negate (Vec3 (x, y, z)) = Vec3 (-x, -y, -z)
-    fromInteger inum = Vec3 (fnum, fnum, fnum) where fnum = fromInteger inum :: Float
+    (Vec3 lx ly lz) + ((Vec3 rx ry rz)) = Vec3 (lx + rx) (ly + ry) (lz + rz)
+    (Vec3 lx ly lz) * ((Vec3 rx ry rz)) = Vec3 (lx * rx) (ly * ry) (lz * rz)
+    abs (Vec3 x y z) = Vec3 (abs x) (abs y) (abs z)
+    signum (Vec3 x y z) = Vec3 (signum x) (signum y) (signum z)
+    negate (Vec3 x y z) = Vec3 (-x) (-y) (-z)
+    fromInteger inum = Vec3 fnum fnum fnum where fnum = fromInteger inum :: Float
 
 -- Vec3 from single float
 vec3FromFloat :: Float -> Vec3
-vec3FromFloat f = Vec3 (f, f, f)
+vec3FromFloat f = Vec3 f f f
 
 -- 3-component vector dot product
 vec3Dot :: Vec3 -> Vec3 -> Float
-vec3Dot (Vec3 (lx, ly, lz)) (Vec3 (rx, ry, rz)) = lx * rx + ly * ry + lz * rz
+vec3Dot (Vec3 lx ly lz) (Vec3 rx ry rz) = lx * rx + ly * ry + lz * rz
 
 -- Make Vec3 from spherical coordinates
 vec3FromSpherical :: Float -> Float -> Vec3
-vec3FromSpherical phi theta = Vec3 (cos phi * sin theta, sin phi * sin theta, cos theta)
+vec3FromSpherical phi theta = Vec3 (cos phi * sin theta) (sin phi * sin theta) (cos theta)
 
 -- Random vector with uniform distribution **on** unit sphere
 randomUnitVec3 :: RandomGenerator -> (Vec3, RandomGenerator)
@@ -104,7 +104,7 @@ randomSphereVec3 gen0 = if vec3Dot v v <= 1.0 then (v, gen3) else randomSphereVe
     (x, gen1) = randomUnitFloat gen0
     (y, gen2) = randomUnitFloat gen1
     (z, gen3) = randomUnitFloat gen2
-    v = Vec3 (x, y, z) * 2 - 1
+    v = Vec3 x y z * 2 - 1
 
 -- Time controller (time, deltaTime and FPS counter)
 data Timer = Timer
@@ -213,12 +213,12 @@ render context = do
                 starCoords =
                     sortBy (\(_, _, dl2) (_, _, dr2) -> compare dr2 dl2) -- Sort by inverse Z order
                     . filter (\(xs, ys, _) -> xs >= 0 && ys >= 0 && xs <= surfaceW - 4 && ys <= surfaceH - 4)
-                    . map (\(Vec3 (x, y, z)) ->
+                    . map (\(Vec3 x y z) ->
                         ( round (halfW + xyMul * x / z)
                         , round (halfH - xyMul * y / z)
                         , x * x + y * y + z * z
                         ))
-                    . filter (\(Vec3 (_, _, z)) -> z > 0)
+                    . filter (\(Vec3 _ _ z) -> z > 0)
 
                 -- Render single star
                 renderStar :: (Int, Int, Float) -> IO ()
@@ -272,7 +272,7 @@ rotateStarsY angle = map rotateStar where
     sinA = sin angle
     cosA = cos angle
     rotateStar :: Vec3 -> Vec3
-    rotateStar (Vec3 (x, y, z)) = Vec3 (z * sinA + x * cosA, y, z * cosA - x * sinA)
+    rotateStar (Vec3 x y z) = Vec3 (z * sinA + x * cosA) y (z * cosA - x * sinA)
 
 data InputAxis = InputAxis
     { inputAxisRotation     :: Float
@@ -311,7 +311,7 @@ updateContext context inputDelta performanceCounter = let
 
         deltaTime = timerDeltaTime timer
         moveSpeed = contextSpeed context + deltaTime * inputAxisAcceleration input * accelerationSpeed
-        starDelta = Vec3 (inputAxisMoveX input, inputAxisMoveY input, 1) * vec3FromFloat (-(moveSpeed * deltaTime))
+        starDelta = Vec3 (inputAxisMoveX input) (inputAxisMoveY input) 1 * vec3FromFloat (-(moveSpeed * deltaTime))
 
         stars0 = contextStars context
         stars1 = if abs (inputAxisRotation input) < 0.1
