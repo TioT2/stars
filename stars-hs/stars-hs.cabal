@@ -33,4 +33,5 @@ executable stars-hs-exe
     , sdl2
     , text
     , vector
+    , vector-algorithms
   default-language: Haskell2010

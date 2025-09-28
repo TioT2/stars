@@ -3,13 +3,13 @@
 module Main (main) where
 
 import Control.Monad (when, unless)
+import Control.Monad.ST (runST)
 import Data.Foldable (traverse_)
 import Data.Word
+import Data.Int
 import Data.Bits
 import Data.Ord (clamp)
-import Data.List (sortBy)
 import Text.Printf (printf)
--- import qualified Data.Vector as Vector
 import qualified Data.Text
 import qualified Foreign
 import qualified SDL
@@ -18,6 +18,7 @@ import qualified Foreign.Ptr
 import qualified Foreign.Storable
 import qualified Foreign.Marshal.Utils
 import qualified Data.Vector.Storable as Vec
+import qualified Data.Vector.Algorithms.Intro as VecSort
 
 -- Xoshiro256++ based random number generator
 data RandomGenerator = RandomGenerator Word64 Word64 Word64 Word64
@@ -51,6 +52,30 @@ randomUnitFloat gen = (realToFrac double, gen') where
     (int, gen') = randomInt64 gen
     double = (fromIntegral int :: Double) / (fromIntegral (maxBound :: Word64) :: Double)
 
+data ScreenVec = ScreenVec Int32 Int32 Float
+
+instance Foreign.Storable ScreenVec where
+    sizeOf _ = 12
+    alignment _ = 4
+
+    peek ptr = do
+        let
+            fptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
+            iptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Int32
+
+        ScreenVec
+            <$> Foreign.Storable.peekElemOff iptr 0
+            <*> Foreign.Storable.peekElemOff iptr 1
+            <*> Foreign.Storable.peekElemOff fptr 2
+
+    poke ptr (ScreenVec x y z) = do
+        let
+            fptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
+            iptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Int32
+        Foreign.Storable.pokeElemOff iptr 0 x
+        Foreign.Storable.pokeElemOff iptr 1 y
+        Foreign.Storable.pokeElemOff fptr 2 z
+
 -- 3-component vector
 data Vec3 = Vec3 Float Float Float
 
@@ -61,16 +86,16 @@ instance Foreign.Storable Vec3 where
 
     peek ptr = do
         let cptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
-        x <- Foreign.Storable.peekElemOff cptr 0
-        y <- Foreign.Storable.peekElemOff cptr 4
-        z <- Foreign.Storable.peekElemOff cptr 8
-        return (Vec3 x y z)
+        Vec3
+            <$> Foreign.Storable.peekElemOff cptr 0
+            <*> Foreign.Storable.peekElemOff cptr 1
+            <*> Foreign.Storable.peekElemOff cptr 2
 
     poke ptr (Vec3 x y z) = do
         let cptr = Foreign.Ptr.castPtr ptr :: Foreign.Ptr Float
         Foreign.Storable.pokeElemOff cptr 0 x
-        Foreign.Storable.pokeElemOff cptr 4 y
-        Foreign.Storable.pokeElemOff cptr 8 z
+        Foreign.Storable.pokeElemOff cptr 1 y
+        Foreign.Storable.pokeElemOff cptr 2 z
 
 -- Implement basic vector operations
 instance Num Vec3 where
@@ -195,9 +220,9 @@ render context = do
             surfacePixels <- SDL.surfacePixels surface
 
             let
-                surfaceW = fromIntegral cSurfaceW :: Int
-                surfaceH = fromIntegral cSurfaceH :: Int
-                surfaceBPP = fromIntegral (SDL.Raw.pixelFormatBytesPerPixel pixelFormat) :: Int
+                surfaceW = fromIntegral cSurfaceW :: Int32
+                surfaceH = fromIntegral cSurfaceH :: Int32
+                surfaceBPP = fromIntegral (SDL.Raw.pixelFormatBytesPerPixel pixelFormat) :: Int32
                 surfacePitch = surfaceW * surfaceBPP
 
                 clip = 0.5 :: Float
@@ -208,46 +233,50 @@ render context = do
                 whScale = sqrt ((wFloat * wFloat + hFloat * hFloat) / (1 - clip * clip))
                 xyMul = clip * wFloat * hFloat / whScale
 
-                -- Filter stars by Z, project them and filter by being on the screen (e.g. build star render set)
-                -- FIXME: This function looks like unreadable sh*t
-                starCoords :: [Vec3] -> [(Int, Int, Float)]
+                -- Generate star coordinate vector
+                starCoords :: Vec.Vector Vec3 -> Vec.Vector ScreenVec
                 starCoords =
-                    sortBy (\(_, _, dl2) (_, _, dr2) -> compare dr2 dl2) -- Sort by inverse Z order
-                    . filter (\(xs, ys, _) -> xs >= 0 && ys >= 0 && xs <= surfaceW - 4 && ys <= surfaceH - 4)
-                    . map (\(Vec3 x y z) ->
-                        ( round (halfW + xyMul * x / z)
-                        , round (halfH - xyMul * y / z)
-                        , x * x + y * y + z * z
-                        ))
-                    . filter (\(Vec3 _ _ z) -> z > 0)
+                    (\stars -> runST $ do
+                        mutStars <- Vec.thaw stars
+                        VecSort.sortBy (\(ScreenVec _ _ dl2) (ScreenVec _ _ dr2) -> compare dl2 dr2) mutStars
+                        Vec.freeze mutStars
+                    )
+                    . Vec.filter (\(ScreenVec xs ys _) -> xs >= 0 && ys >= 0 && xs <= surfaceW - 4 && ys <= surfaceH - 4)
+                    . Vec.map (\(Vec3 x y z) -> ScreenVec
+                        (round (halfW + xyMul * x / z))
+                        (round (halfH - xyMul * y / z))
+                        (x * x + y * y + z * z)
+                    )
+                    . Vec.filter (\(Vec3 _ _ z) -> z > 0)
 
                 -- Render single star
-                renderStar :: (Int, Int, Float) -> IO ()
-                renderStar (xs, ys, d2) = drawBox size basePtr where
-                    basePtr = Foreign.Ptr.plusPtr surfacePixels (ys * surfacePitch + xs * 4)
+                renderStar :: ScreenVec -> IO ()
+                renderStar (ScreenVec xs ys d2) = drawBox size basePtr where
+                    basePtr = Foreign.Ptr.plusPtr surfacePixels (fromIntegral (ys * surfacePitch + xs * 4) :: Int)
 
+                    size :: Int32
                     size | d2 < 0.0025 = 4
                          | d2 < 0.01 = 3
                          | d2 < 0.09 = 2
                          | otherwise = 1
                     color = round (255 * (1 - d2)) :: Word8
 
-                    drawBox :: Int -> Foreign.Ptr () -> IO ()
+                    drawBox :: Int32 -> Foreign.Ptr () -> IO ()
                     drawBox 0 _ = return ()
                     drawBox lineCount ptr = do
-                        Foreign.Marshal.Utils.fillBytes ptr color (size * 4)
-                        drawBox (lineCount - 1) (Foreign.Ptr.plusPtr ptr surfacePitch)
+                        Foreign.Marshal.Utils.fillBytes ptr color (fromIntegral (size * 4) :: Int)
+                        drawBox (lineCount - 1) (Foreign.Ptr.plusPtr ptr (fromIntegral surfacePitch :: Int))
 
             -- Clear screen and render stars
-            Foreign.Marshal.Utils.fillBytes surfacePixels 0x00 (surfacePitch * surfaceH)
-            traverse_ renderStar (starCoords (Vec.toList (contextStars context)))
+            Foreign.Marshal.Utils.fillBytes surfacePixels 0x00 (fromIntegral (surfacePitch * surfaceH) :: Int)
+            traverse_ renderStar (Vec.toList (starCoords (contextStars context)))
 
             SDL.unlockSurface surface
 
     SDL.updateWindowSurface (contextWindow context)
 
-moveStars' :: RandomGenerator -> Vec3 -> Vec.Vector Vec3 -> (Vec.Vector Vec3, RandomGenerator)
-moveStars' random delta stars = (stars'', random')
+moveStars :: RandomGenerator -> Vec3 -> Vec.Vector Vec3 -> (Vec.Vector Vec3, RandomGenerator)
+moveStars random delta stars = (stars'', random')
     where
         -- Random star generator
         genRandomStar :: RandomGenerator -> (Vec3, RandomGenerator)
@@ -257,12 +286,12 @@ moveStars' random delta stars = (stars'', random')
 
         starCount = Vec.length stars
         stars' = Vec.filter (\s -> vec3Dot s s <= 1.0) . Vec.map (+ delta) $ stars
+
         (newStars, random') = genRandomSeq genRandomStar (starCount - Vec.length stars') random
         stars'' = stars' Vec.++ Vec.fromList newStars
 
-
-rotateStarsY' :: Float -> Vec.Vector Vec3 -> Vec.Vector Vec3
-rotateStarsY' angle = Vec.map rotateStar where
+rotateStarsY :: Float -> Vec.Vector Vec3 -> Vec.Vector Vec3
+rotateStarsY angle = Vec.map rotateStar where
     sinA = sin angle
     cosA = cos angle
     rotateStar :: Vec3 -> Vec3
@@ -297,30 +326,30 @@ inputAxisCompose prev next = InputAxis
 
 -- Update context for next frame
 updateContext :: Context -> InputAxis -> Word64 -> Context
-updateContext context inputDelta performanceCounter = let
-        rotationSpeed = 1 :: Float
-        accelerationSpeed = 1 :: Float
-        input = inputAxisCompose (contextInput context) inputDelta
-        timer = timerUpdate (contextTimer context) performanceCounter
+updateContext context inputDelta performanceCounter = context' where
+    rotationSpeed = 1 :: Float
+    accelerationSpeed = 1 :: Float
+    input = inputAxisCompose (contextInput context) inputDelta
+    timer = timerUpdate (contextTimer context) performanceCounter
 
-        deltaTime = timerDeltaTime timer
-        moveSpeed = contextSpeed context + deltaTime * inputAxisAcceleration input * accelerationSpeed
-        starDelta = Vec3 (inputAxisMoveX input) (inputAxisMoveY input) 1 * vec3FromFloat (-(moveSpeed * deltaTime))
+    deltaTime = timerDeltaTime timer
+    moveSpeed = contextSpeed context + deltaTime * inputAxisAcceleration input * accelerationSpeed
+    starDelta = Vec3 (inputAxisMoveX input) (inputAxisMoveY input) 1 * vec3FromFloat (-(moveSpeed * deltaTime))
 
-        stars0 = contextStars context
-        stars1 = if abs (inputAxisRotation input) < 0.1
-            then stars0
-            else rotateStarsY' (rotationSpeed * deltaTime * inputAxisRotation input) stars0
-        (stars2, random) = moveStars' (contextRandom context) starDelta stars1
-    in
-        Context
-            { contextWindow = contextWindow context
-            , contextStars = stars2
-            , contextRandom = random
-            , contextInput = input
-            , contextSpeed = moveSpeed
-            , contextTimer = timer
-            }
+    stars0 = contextStars context
+    stars1 = if abs (inputAxisRotation input) < 0.1
+        then stars0
+        else rotateStarsY (rotationSpeed * deltaTime * inputAxisRotation input) stars0
+    (stars2, random) = moveStars (contextRandom context) starDelta stars1
+
+    context' = Context
+        { contextWindow = contextWindow context
+        , contextStars = stars2
+        , contextRandom = random
+        , contextInput = input
+        , contextSpeed = moveSpeed
+        , contextTimer = timer
+        }
 
 -- Handle array of the input events
 handleEvents :: [SDL.Event] -> InputAxis -> (Bool, InputAxis)
