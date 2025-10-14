@@ -1,3 +1,5 @@
+//! 'Stars' test project implementation main file
+
 pub struct RandomGenerator(u64, u64, u64, u64);
 
 impl RandomGenerator {
@@ -10,7 +12,12 @@ impl RandomGenerator {
     }
 
     pub fn new(mut seed: u64) -> Self {
-        Self(Self::splitmix64(&mut seed), Self::splitmix64(&mut seed), Self::splitmix64(&mut seed), Self::splitmix64(&mut seed))
+        Self(
+            Self::splitmix64(&mut seed),
+            Self::splitmix64(&mut seed),
+            Self::splitmix64(&mut seed),
+            Self::splitmix64(&mut seed)
+        )
     }
 
     pub fn next_u64(&mut self) -> u64 {
@@ -48,7 +55,7 @@ impl Vec3 {
         Self { x, y, z }
     }
 
-    pub fn dot(&self, rhs: Vec3) -> f32 {
+    pub fn dot(self, rhs: Vec3) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
@@ -61,11 +68,28 @@ impl Vec3 {
     }
 }
 
+impl std::ops::Add<Self> for Vec3 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
+    }
+}
+
+impl std::ops::Mul<f32> for Vec3 {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self::new(self.x * rhs, self.y * rhs, self.z * rhs)
+    }
+}
+
 impl RandomGenerator {
     pub fn next_unit_vec3(&mut self) -> Vec3 {
-        let ksi1 = self.next_unit_f32();
-        let ksi2 = self.next_unit_f32();
-        Vec3::from_spherical(2.0 * std::f32::consts::PI * ksi2, (ksi1 * 2.0 - 1.0).acos())
+        Vec3::from_spherical(
+            2.0 * std::f32::consts::PI * self.next_unit_f32(),
+            (self.next_unit_f32() * 2.0 - 1.0).acos()
+        )
     }
 
     pub fn next_sphere_vec3(&mut self) -> Vec3 {
@@ -155,15 +179,11 @@ impl Input {
     /// Compose two inputs
     pub fn compose(&self, addition: Self) -> Self {
         macro_rules! add_clamp {
-            ($name: ident) => { (self.$name + addition.$name).clamp(-1.0, 1.0) }
+            ($($name: ident),*) => {
+                Self { $( $name: (self.$name + addition.$name).clamp(-1.0, 1.0)),* }
+            }
         }
-
-        Self {
-            rotation: add_clamp!(rotation),
-            acceleration: add_clamp!(acceleration),
-            move_x: add_clamp!(move_x),
-            move_y: add_clamp!(move_y)
-        }
+        add_clamp!(rotation, acceleration, move_x, move_y)
     }
 }
 
@@ -181,11 +201,11 @@ pub struct Context {
 impl Context {
     pub fn move_stars(&mut self, off: Vec3) {
         for star in &mut self.stars {
-            *star = Vec3::new(star.x + off.x, star.y + off.y, star.z + off.z);
-            if star.dot(*star) > 1.0 {
+            *star = *star + off;
+
+            if Vec3::dot(*star, *star) > 1.0 {
                 *star = self.random.next_unit_vec3();
-                let dir = -off.dot(*star).signum();
-                *star = Vec3::new(star.x * dir, star.y * dir, star.z * dir);
+                *star = *star * -off.dot(*star).signum();
             }
         }
     }
@@ -204,20 +224,21 @@ impl Context {
     fn on_key_changed(&mut self, key: sdl2::keyboard::Scancode, is_pressed: bool) {
         type Scancode = sdl2::keyboard::Scancode;
         let delta = (is_pressed as i32 * 2 - 1) as f32;
+        let mut input = Input::default();
 
-        let new_input = match key {
-            Scancode::Q => Input { rotation     :  delta, ..Default::default() },
-            Scancode::E => Input { rotation     : -delta, ..Default::default() },
-            Scancode::R => Input { acceleration :  delta, ..Default::default() },
-            Scancode::F => Input { acceleration : -delta, ..Default::default() },
-            Scancode::W => Input { move_y       :  delta, ..Default::default() },
-            Scancode::S => Input { move_y       : -delta, ..Default::default() },
-            Scancode::D => Input { move_x       :  delta, ..Default::default() },
-            Scancode::A => Input { move_x       : -delta, ..Default::default() },
-            _ => Input::default(),
-        };
+        match key {
+            Scancode::Q => input.rotation     =  delta,
+            Scancode::E => input.rotation     = -delta,
+            Scancode::R => input.acceleration =  delta,
+            Scancode::F => input.acceleration = -delta,
+            Scancode::W => input.move_y       =  delta,
+            Scancode::S => input.move_y       = -delta,
+            Scancode::D => input.move_x       =  delta,
+            Scancode::A => input.move_x       = -delta,
+            _ => {}
+        }
 
-        self.input = self.input.compose(new_input);
+        self.input = self.input.compose(input);
     }
 
     pub fn render(&mut self) {
@@ -335,11 +356,7 @@ impl Context {
             }
 
             let star_coef = -self.move_speed * self.timer.delta_time();
-            self.move_stars(Vec3::new(
-                star_coef * self.input.move_x,
-                star_coef * self.input.move_y,
-                star_coef * 1.0
-            ));
+            self.move_stars(Vec3::new(self.input.move_x, self.input.move_y, 1.0) * star_coef);
 
             if self.timer.fps_is_new() {
                 println!("FPS: {}", self.timer.fps());
