@@ -1,8 +1,4 @@
 #include <SDL2/SDL.h>
-#include <SDL_surface.h>
-#include <SDL_timer.h>
-#include <SDL_video.h>
-#include <string.h>
 
 typedef struct RandomGenerator_ {
     unsigned long s0;
@@ -11,7 +7,7 @@ typedef struct RandomGenerator_ {
     unsigned long s3;
 } RandomGenerator;
 
-unsigned long splitMix64( unsigned long *state ) {
+static unsigned long splitMix64( unsigned long *state ) {
     unsigned long r = (*state += 0x9E3779B97F4A7C15);
     r = (r ^ (r >> 30)) * 0xBF58476D1CE4E5B9;
     r = (r ^ (r >> 27)) * 0x94D049BB133111EB;
@@ -162,7 +158,7 @@ typedef struct Context_ {
 
     unsigned long starCount;
     Vec3 *stars;
-    Vertex *starVertexBuffer;
+    Vertex *vertex_buffer;
 } Context;
 
 void contextInitStars( Context *self ) {
@@ -248,6 +244,10 @@ void contextUpdate( Context *self ) {
     contextMoveStars(self, starOffset);
 }
 
+static int vertex_qsort_cmp( const void *lhs, const void *rhs ) {
+    return 1 - 2 * (int)signbit(((const Vertex *)rhs)->d2 - ((const Vertex *)lhs)->d2);
+}
+
 void contextRender( Context *self ) {
     SDL_Surface *surface = SDL_GetWindowSurface(self->window);
     const float clip = 0.5;
@@ -255,7 +255,7 @@ void contextRender( Context *self ) {
     float halfH = surface->h / 2.0f;
     float whScale = sqrt((surface->w * surface->w + surface->h * surface->h) / (1.0f - clip * clip));
     float xyMul = clip * surface->w * surface->h / whScale;
-    Vertex *vt = self->starVertexBuffer;
+    Vertex *vt = self->vertex_buffer;
     Vertex *vtEnd;
     Vec3 *const starEnd = self->stars + self->starCount;
     Vec3 *star;
@@ -271,31 +271,27 @@ void contextRender( Context *self ) {
             continue;
         vt->x = halfW + xyMul * star->x / star->z;
         vt->y = halfH - xyMul * star->y / star->z;
-        if (vt->x < 0 || vt->y < 0 || vt->x > surface->w - 4 || vt->y > surface->h - 4)
+        // vt->x and vt->y cannot be < 0 due to their unsigned nature
+        if (vt->x > surface->w - 4 || vt->y > surface->h - 4)
             continue;
         vt->d2 = vec3Dot(*star, *star);
         vt++;
     }
 
+    vtEnd = vt;
+    vt = self->vertex_buffer;
+    qsort(vt, vtEnd - vt, sizeof(Vertex), vertex_qsort_cmp);
+
     memset(surface->pixels, 0, surface->pitch * surface->h);
 
-    vtEnd = vt;
-    for (vt = self->starVertexBuffer; vt < vtEnd; vt++) {
-        int size = vt->d2 < 0.0025f ? 4 : vt->d2 < 0.01f ? 3 : vt->d2 < 0.09 ? 2 : 1;
-        int x;
-        int y;
+    for (; vt < vtEnd; vt++) {
+        const int size = vt->d2 < 0.0025f ? 4 : vt->d2 < 0.01f ? 3 : vt->d2 < 0.09 ? 2 : 1;
+        const unsigned char color = (unsigned char)(255.0f * (1.0f - vt->d2));
         unsigned char *pixelPtr = (unsigned char *)surface->pixels + surface->pitch * vt->y + vt->x * 4;
-        unsigned int color = (unsigned char)(255.0f * (1.0f - vt->d2));
-        color |= color << 8;
-        color |= color << 16;
+        unsigned char *const pixelEnd = pixelPtr + surface->pitch * size;
 
-        for (y = 0; y < size; y++) {
-            for (x = 0; x < size; x++) {
-                memcpy(pixelPtr, &color, 4);
-                pixelPtr += 4;
-            }
-            pixelPtr += surface->pitch - size * 4;
-        }
+        for (; pixelPtr < pixelEnd; pixelPtr += surface->pitch)
+            memset(pixelPtr, color, size * 4);
     }
 
     if (SDL_MUSTLOCK(surface))
@@ -346,7 +342,7 @@ int main( void ) {
         goto main__deinit;
 
     context.stars = (Vec3 *)(allocation + 0);
-    context.starVertexBuffer = (Vertex *)(allocation + sizeof(Vec3) * context.starCount);
+    context.vertex_buffer = (Vertex *)(allocation + sizeof(Vec3) * context.starCount);
     context.speed = 0.47;
     contextInitStars(&context);
 
