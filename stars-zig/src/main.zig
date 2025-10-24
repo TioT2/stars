@@ -1,7 +1,4 @@
 const std = @import("std");
-const stars_zig = @import("stars_zig");
-
-// Import SDL2 library
 const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
@@ -91,7 +88,7 @@ const RandomGenerator = struct {
     }
 
     pub fn randomUnitFloat(self: *Self) f32 {
-        return @as(f32, @floatCast(@as(f64, @floatFromInt(self.randomU64())) / @as(f64, @floatFromInt(0xFFFF_FFFF_FFFF_FFFF))));
+        return @as(f32, @floatCast(@as(f64, @floatFromInt(self.randomU64())) / @as(f64, @floatFromInt(std.math.maxInt(u64)))));
     }
 
     pub fn randomUnitVec3(self: *Self) Vec3 {
@@ -117,13 +114,13 @@ const Timer = struct {
     _frequency: u64,
     _start: u64,
     _now: u64,
-    _fpsDuration: u64,
-    _fpsLastMeasure: u64,
-    deltaTime: f32,
+    _fps_duration: u64,
+    _fps_last_measure: u64,
+    delta_time: f32,
     time: f32,
-    _fpsFrameCount: u64,
+    _fps_frame_count: u64,
     fps: f32,
-    fpsIsNew: bool,
+    fps_is_new: bool,
 
     const Self = @This();
 
@@ -135,30 +132,33 @@ const Timer = struct {
             ._frequency = freq,
             ._start = now,
             ._now = now,
-            ._fpsDuration = freq * 3,
-            ._fpsLastMeasure = now,
-            .deltaTime = 0.00001,
+            ._fps_duration = freq * 3,
+            ._fps_last_measure = now,
+            .delta_time = 0.00001,
             .time = 0.00001,
-            ._fpsFrameCount = 0,
+            ._fps_frame_count = 0,
             .fps = 0.0,
-            .fpsIsNew = false,
+            .fps_is_new = false,
         };
+    }
+
+    fn duration_of(self: *Self, begin: u64, end: u64) f32 {
+        return @as(f32, @floatFromInt(end - begin)) / @as(f32, @floatFromInt(self._frequency));
     }
 
     pub fn update(self: *Self) void {
         const now = c.SDL_GetPerformanceCounter();
-        const ffreq = @as(f32, @floatFromInt(self._frequency));
 
-        self.deltaTime = @as(f32, @floatFromInt(now - self._now)) / ffreq;
-        self.time = @as(f32, @floatFromInt(now - self._start)) / ffreq;
+        self.delta_time = self.duration_of(self._now, now);
+        self.time = self.duration_of(self._start, now);
         self._now = now;
 
-        self._fpsFrameCount += 1;
-        self.fpsIsNew = now - self._fpsLastMeasure > self._fpsDuration;
-        if (self.fpsIsNew) {
-            self.fps = @as(f32, @floatFromInt(self._fpsFrameCount)) / (@as(f32, @floatFromInt(now - self._fpsLastMeasure)) / ffreq);
-            self._fpsLastMeasure = now;
-            self._fpsFrameCount = 0;
+        self._fps_frame_count += 1;
+        self.fps_is_new = now - self._fps_last_measure > self._fps_duration;
+        if (self.fps_is_new) {
+            self.fps = @as(f32, @floatFromInt(self._fps_frame_count)) / self.duration_of(self._fps_last_measure, now);
+            self._fps_last_measure = now;
+            self._fps_frame_count = 0;
         }
     }
 };
@@ -193,8 +193,8 @@ const Input = struct {
 };
 
 const Vertex = struct {
-    x: i32,
-    y: i32,
+    x: u32,
+    y: u32,
     d2: f32,
 
     fn sort_comparator(_: void, l: Vertex, r: Vertex) bool {
@@ -226,7 +226,6 @@ const Context = struct {
         errdefer allocator.free(stars);
 
         var random = RandomGenerator.init(seed);
-
         for (stars) |*star| star.* = random.randomSphereVec3();
 
         const vertex_buffer = try allocator.alloc(Vertex, star_count);
@@ -288,19 +287,19 @@ const Context = struct {
     }
 
     fn update(self: *Self) void {
-        const accelerationSpeed: f32 = 1;
-        const rotationSpeed: f32 = 1;
+        const acceleration_speed: f32 = 1;
+        const rotation_speed: f32 = 1;
 
         self.timer.update();
-        if (self.timer.fpsIsNew)
+        if (self.timer.fps_is_new)
             std.debug.print("FPS: {d}\n", .{self.timer.fps});
 
-        self.speed += self.timer.deltaTime * self.input.acceleration * accelerationSpeed;
+        self.speed += self.timer.delta_time * self.input.acceleration * acceleration_speed;
         if (@abs(self.input.rotation) > 0.1)
-            self.rotateStars(rotationSpeed * self.input.rotation * self.timer.deltaTime);
+            self.rotateStars(rotation_speed * self.input.rotation * self.timer.delta_time);
         self.moveStars(Vec3
             .init(self.input.move_x, self.input.move_y, 1)
-            .mul_f(-self.speed * self.timer.deltaTime));
+            .mul_f(-self.speed * self.timer.delta_time));
     }
 
     fn render(self: *Self) void {
@@ -327,7 +326,7 @@ const Context = struct {
             if (star.z < 0)
                 continue;
             const vx = half_w + xy_mul * star.x / star.z;
-            const vy = half_h + xy_mul * star.y / star.z;
+            const vy = half_h - xy_mul * star.y / star.z;
             if (vx < 0 or vy < 0 or vx > surface_w or vy > surface_h)
                 continue;
             vt[0] = Vertex{
@@ -338,7 +337,7 @@ const Context = struct {
             vt = vt + 1;
         }
 
-        // Sort stars
+        // Sort star vertices
         const used_vertex_count = (@intFromPtr(vt) - @intFromPtr(self.vertex_buffer.ptr)) / @sizeOf(Vertex);
         const vertices = self.vertex_buffer[0..used_vertex_count];
         std.sort.pdq(Vertex, vertices, {}, Vertex.sort_comparator);
@@ -346,7 +345,7 @@ const Context = struct {
         const surface_pixels = @as([*]u8, @ptrCast(surface.*.pixels));
         @memset(surface_pixels[0..@intCast(surface.*.pitch * surface.*.h)], 0);
 
-        const surface_pitch: i32 = @intCast(surface.*.pitch);
+        const surface_pitch: u32 = @intCast(surface.*.pitch);
 
         for (vertices) |vertex| {
             const size: u32 = getsize: {
@@ -357,12 +356,11 @@ const Context = struct {
             };
 
             const color: u8 = @intFromFloat(255 * (1 - vertex.d2));
-            var pixel_ptr = surface_pixels + @as(usize, @intCast(surface_pitch * vertex.y + vertex.x * 4));
+            var pixel_ptr = surface_pixels + surface_pitch * vertex.y + vertex.x * 4;
+            const pixel_end = pixel_ptr + surface_pitch * size;
 
-            for (0..size) |_| {
+            while (@intFromPtr(pixel_ptr) < @intFromPtr(pixel_end)) : (pixel_ptr += surface_pitch)
                 @memset(pixel_ptr[0 .. size * 4], color);
-                pixel_ptr = pixel_ptr + @as(usize, @intCast(surface_pitch));
-            }
         }
 
         if (c.SDL_MUSTLOCK(surface))
@@ -400,11 +398,7 @@ const Context = struct {
 
 pub fn main() !void {
     // Initialize SDL2 and defer quit
-    const initCode = c.SDL_Init(c.SDL_INIT_VIDEO);
-    if (initCode != 0) {
-        std.debug.print("SDL initialization failed with code {d}\n", .{initCode});
-        return;
-    }
+    _ = c.SDL_Init(c.SDL_INIT_VIDEO);
     defer c.SDL_Quit();
 
     const window = c.SDL_CreateWindow("stars-zig", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, 800, 600, 0);
