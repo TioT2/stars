@@ -73,7 +73,10 @@ const RandomGenerator = struct {
     }
 
     pub fn randomU64(self: *Self) u64 {
-        const result = @addWithOverflow(self.s0, std.math.rotl(u64, @addWithOverflow(self.s0, self.s3)[0], 23))[0];
+        const result = @addWithOverflow(
+            self.s0,
+            std.math.rotl(u64, @addWithOverflow(self.s0, self.s3)[0], 23),
+        )[0];
         const temp = self.s1 << 17;
 
         self.s2 ^= self.s0;
@@ -302,18 +305,9 @@ const Context = struct {
             .mul_f(-self.speed * self.timer.delta_time));
     }
 
-    fn render(self: *Self) void {
-        const surface = c.SDL_GetWindowSurface(self.window);
-
-        if (c.SDL_MUSTLOCK(surface) and c.SDL_LockSurface(surface) == 0)
-            return;
-
-        if (surface.*.format.*.format != c.SDL_PIXELFORMAT_RGB888)
-            return;
-
+    // Build star vertex buffer
+    fn build_vertex_buffer(self: *Self, surface_w: f32, surface_h: f32) []Vertex {
         const clip: f32 = 0.5;
-        const surface_w = @as(f32, @floatFromInt(surface.*.w)) - 4;
-        const surface_h = @as(f32, @floatFromInt(surface.*.h)) - 4;
         const half_w = surface_w / 2;
         const half_h = surface_h / 2;
         const wh_scale = @sqrt((surface_w * surface_w + surface_h * surface_h) / (1 - clip * clip));
@@ -337,15 +331,24 @@ const Context = struct {
             vt = vt + 1;
         }
 
-        // Sort star vertices
         const used_vertex_count = (@intFromPtr(vt) - @intFromPtr(self.vertex_buffer.ptr)) / @sizeOf(Vertex);
         const vertices = self.vertex_buffer[0..used_vertex_count];
         std.sort.pdq(Vertex, vertices, {}, Vertex.sort_comparator);
+        return vertices;
+    }
 
-        const surface_pixels = @as([*]u8, @ptrCast(surface.*.pixels));
-        @memset(surface_pixels[0..@intCast(surface.*.pitch * surface.*.h)], 0);
-
-        const surface_pitch: u32 = @intCast(surface.*.pitch);
+    // Display vertex buffer contents
+    fn draw_vertex_buffer(
+        self: *Self,
+        vertices: []Vertex,
+        surface_w: u32,
+        surface_h: u32,
+        surface_pitch: u32,
+        surface_pixels: [*]u8,
+    ) void {
+        _ = self;
+        _ = surface_w;
+        @memset(surface_pixels[0..@intCast(surface_pitch * surface_h)], 0);
 
         for (vertices) |vertex| {
             const size: u32 = getsize: {
@@ -362,6 +365,28 @@ const Context = struct {
             while (@intFromPtr(pixel_ptr) < @intFromPtr(pixel_end)) : (pixel_ptr += surface_pitch)
                 @memset(pixel_ptr[0 .. size * 4], color);
         }
+    }
+
+    fn render(self: *Self) void {
+        const surface = c.SDL_GetWindowSurface(self.window);
+
+        if (c.SDL_MUSTLOCK(surface) and c.SDL_LockSurface(surface) == 0)
+            return;
+
+        if (surface.*.format.*.format != c.SDL_PIXELFORMAT_RGB888)
+            return;
+
+        // Render!
+        self.draw_vertex_buffer(
+            self.build_vertex_buffer(
+                @as(f32, @floatFromInt(surface.*.w)) - 4,
+                @as(f32, @floatFromInt(surface.*.h)) - 4,
+            ),
+            @intCast(surface.*.w),
+            @intCast(surface.*.h),
+            @intCast(surface.*.pitch),
+            @as([*]u8, @ptrCast(surface.*.pixels)),
+        );
 
         if (c.SDL_MUSTLOCK(surface))
             c.SDL_UnlockSurface(surface);
