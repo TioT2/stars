@@ -3,46 +3,25 @@ const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 
-// 3-component vector
-const Vec3 = struct {
-    x: f32,
-    y: f32,
-    z: f32,
+// Vector type
+const Vector = @Vector(3, f32);
 
-    const Self = @This();
+pub fn vectorDot(lhs: Vector, rhs: Vector) f32 {
+    const prod = lhs * rhs;
+    return prod[0] + prod[1] + prod[2];
+}
 
-    pub fn init(x: f32, y: f32, z: f32) Self {
-        return Self{ .x = x, .y = y, .z = z };
-    }
+pub fn vectorMulF(lhs: Vector, val: f32) Vector {
+    return lhs * @as(Vector, @splat(val));
+}
 
-    pub fn add(self: Self, rhs: Self) Self {
-        return Self{
-            .x = self.x + rhs.x,
-            .y = self.y + rhs.y,
-            .z = self.z + rhs.z,
-        };
-    }
-
-    pub fn mul_f(self: Self, n: f32) Self {
-        return Self{
-            .x = self.x * n,
-            .y = self.y * n,
-            .z = self.z * n,
-        };
-    }
-
-    pub fn dot(self: Self, rhs: Self) f32 {
-        return self.x * rhs.x + self.y * rhs.y + self.z * rhs.z;
-    }
-
-    pub fn fromSpherical(phi: f32, theta: f32) Self {
-        return Self{
-            .x = std.math.cos(phi) * std.math.sin(theta),
-            .y = std.math.sin(phi) * std.math.sin(theta),
-            .z = std.math.cos(theta),
-        };
-    }
-};
+pub fn vectorFromSpherical(phi: f32, theta: f32) Vector {
+    return Vector{
+        std.math.cos(phi) * std.math.sin(theta),
+        std.math.sin(phi) * std.math.sin(theta),
+        std.math.cos(theta),
+    };
+}
 
 const RandomGenerator = struct {
     s0: u64,
@@ -94,20 +73,20 @@ const RandomGenerator = struct {
         return @as(f32, @floatCast(@as(f64, @floatFromInt(self.randomU64())) / @as(f64, @floatFromInt(std.math.maxInt(u64)))));
     }
 
-    pub fn randomUnitVec3(self: *Self) Vec3 {
+    pub fn randomUnitVec3(self: *Self) @Vector(3, f32) {
         const ksi1 = self.randomUnitFloat();
         const ksi2 = self.randomUnitFloat();
 
-        return Vec3.fromSpherical(2.0 * std.math.pi * ksi1, std.math.acos(2.0 * ksi2 - 1.0));
+        return vectorFromSpherical(2.0 * std.math.pi * ksi1, std.math.acos(2.0 * ksi2 - 1.0));
     }
 
-    pub fn randomSphereVec3(self: *Self) Vec3 {
-        var v: Vec3 = undefined;
+    pub fn randomSphereVec3(self: *Self) Vector {
+        var v: Vector = undefined;
         while (true) {
-            v.x = self.randomUnitFloat() * 2 - 1;
-            v.y = self.randomUnitFloat() * 2 - 1;
-            v.z = self.randomUnitFloat() * 2 - 1;
-            if (v.dot(v) <= 1.0)
+            v[0] = self.randomUnitFloat() * 2 - 1;
+            v[1] = self.randomUnitFloat() * 2 - 1;
+            v[2] = self.randomUnitFloat() * 2 - 1;
+            if (vectorDot(v, v) <= 1.0)
                 return v;
         }
     }
@@ -214,7 +193,7 @@ const Context = struct {
     speed: f32,
 
     allocator: std.mem.Allocator,
-    stars: []Vec3,
+    stars: []Vector,
     vertex_buffer: []Vertex,
 
     const Self = @This();
@@ -225,7 +204,7 @@ const Context = struct {
         star_count: usize,
         seed: u64,
     ) !Self {
-        const stars = try allocator.alloc(Vec3, star_count);
+        const stars = try allocator.alloc(Vector, star_count);
         errdefer allocator.free(stars);
 
         var random = RandomGenerator.init(seed);
@@ -271,20 +250,20 @@ const Context = struct {
         const cosa = @cos(alpha);
 
         for (self.stars) |*star| {
-            const x = star.z * sina + star.x * cosa;
-            const z = star.z * cosa - star.x * sina;
-
-            star.x = x;
-            star.z = z;
+            star.* = Vector{
+                star[2] * sina + star[0] * cosa,
+                star[1],
+                star[2] * cosa - star[0] * sina,
+            };
         }
     }
 
-    fn moveStars(self: *Self, offset: Vec3) void {
+    fn moveStars(self: *Self, offset: Vector) void {
         for (self.stars) |*star| {
-            star.* = star.add(offset);
-            if (star.dot(star.*) > 1) {
+            star.* = star.* + offset;
+            if (vectorDot(star.*, star.*) > 1) {
                 star.* = self.random.randomUnitVec3();
-                star.* = star.mul_f(-std.math.sign(star.dot(offset)));
+                star.* = vectorMulF(star.*, -std.math.sign(vectorDot(star.*, offset)));
             }
         }
     }
@@ -300,33 +279,36 @@ const Context = struct {
         self.speed += self.timer.delta_time * self.input.acceleration * acceleration_speed;
         if (@abs(self.input.rotation) > 0.1)
             self.rotateStars(rotation_speed * self.input.rotation * self.timer.delta_time);
-        self.moveStars(Vec3
-            .init(self.input.move_x, self.input.move_y, 1)
-            .mul_f(-self.speed * self.timer.delta_time));
+        self.moveStars(vectorMulF(
+            Vector{ self.input.move_x, self.input.move_y, 1 },
+            -self.speed * self.timer.delta_time,
+        ));
     }
 
     // Build star vertex buffer
-    fn build_vertex_buffer(self: *Self, surface_w: f32, surface_h: f32) []Vertex {
+    fn build_vertex_buffer(self: *Self, surface_w: isize, surface_h: isize) []Vertex {
         const clip: f32 = 0.5;
-        const half_w = surface_w / 2;
-        const half_h = surface_h / 2;
-        const wh_scale = @sqrt((surface_w * surface_w + surface_h * surface_h) / (1 - clip * clip));
-        const xy_mul = clip * surface_w * surface_h / wh_scale;
+        const sw: f32 = @floatFromInt(surface_w);
+        const sh: f32 = @floatFromInt(surface_h);
+        const half_w = sw / 2;
+        const half_h = sh / 2;
+        const wh_scale = @sqrt((sw * sw + sh * sh) / (1 - clip * clip));
+        const xy_mul = clip * sw * sh / wh_scale;
 
         // Current vertex pointer
         var vt: [*]Vertex = self.vertex_buffer.ptr;
 
         for (self.stars) |star| {
-            if (star.z < 0)
+            if (star[2] < 0)
                 continue;
-            const vx = half_w + xy_mul * star.x / star.z;
-            const vy = half_h - xy_mul * star.y / star.z;
+            const vx: isize = @intFromFloat(half_w + xy_mul * star[0] / star[2]);
+            const vy: isize = @intFromFloat(half_h - xy_mul * star[1] / star[2]);
             if (vx < 0 or vy < 0 or vx > surface_w or vy > surface_h)
                 continue;
             vt[0] = Vertex{
-                .x = @intFromFloat(vx),
-                .y = @intFromFloat(vy),
-                .d2 = Vec3.dot(star, star),
+                .x = @intCast(vx),
+                .y = @intCast(vy),
+                .d2 = vectorDot(star, star),
             };
             vt = vt + 1;
         }
@@ -348,7 +330,7 @@ const Context = struct {
     ) void {
         _ = self;
         _ = surface_w;
-        @memset(surface_pixels[0..@intCast(surface_pitch * surface_h)], 0);
+        @memset(surface_pixels[0 .. surface_pitch * surface_h], 0);
 
         for (vertices) |vertex| {
             const size: u32 = getsize: {
@@ -379,8 +361,8 @@ const Context = struct {
         // Render!
         self.draw_vertex_buffer(
             self.build_vertex_buffer(
-                @as(f32, @floatFromInt(surface.*.w)) - 4,
-                @as(f32, @floatFromInt(surface.*.h)) - 4,
+                @intCast(surface.*.w - 4),
+                @intCast(surface.*.h - 4),
             ),
             @intCast(surface.*.w),
             @intCast(surface.*.h),
