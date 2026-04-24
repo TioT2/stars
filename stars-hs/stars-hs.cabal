@@ -1,9 +1,10 @@
 cabal-version: 3.0
-    
+
+
 name:        stars-hs
 version:     0.1.0.0
 synopsis:    Haskell implementation of 'stars' test project.
-description: Implementation of interactive demo with camera flying through infinite star field. Implementation shares algorithm with C/C++/Rust/... implementations.
+description: Implementation of interactive demo with camera flying through infinite star field. Shares algorithm with C/C++/Rust/... implementations.
 author:      TioT2
 build-type:  Simple
 
@@ -13,10 +14,10 @@ common warnings
 executable stars-hs
     import:           warnings
     main-is:          Main.hs
-    build-depends:    base ^>=4.18
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base ^>=4.18.3.0
                     , sdl2 ^>=2.5
                     , text ^>=2.0
-                    , vector ^>=0.13
-                    , vector-algorithms ^>=0.9
     hs-source-dirs:   app
     default-language: Haskell2010
