@@ -109,7 +109,7 @@ tInit freq now = Timer
   , tDeltaTime = 0.01
   , tTime = 0.00
   , tFpsFrameCount = 0
-  , tFpsDuration = 1 * freq
+  , tFpsDuration = 3 * freq
   , tFpsLastMeasure = now - 1
   , tFps = 0
   }

@@ -41,6 +41,26 @@ impl RandomGenerator {
     pub fn next_unit_f32(&mut self) -> f32 {
         (self.next_u64() as f64 / u64::MAX as f64) as f32
     }
+
+    pub fn next_unit_vec3(&mut self) -> Vec3 {
+        Vec3::from_spherical(
+            2.0 * std::f32::consts::PI * self.next_unit_f32(),
+            (self.next_unit_f32() * 2.0 - 1.0).acos()
+        )
+    }
+
+    pub fn next_sphere_vec3(&mut self) -> Vec3 {
+        loop {
+            let v = Vec3::new(
+                self.next_unit_f32() * 2.0 - 1.0,
+                self.next_unit_f32() * 2.0 - 1.0,
+                self.next_unit_f32() * 2.0 - 1.0
+            );
+            if v.dot(v) <= 1.0 {
+                return v;
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -60,11 +80,9 @@ impl Vec3 {
     }
 
     pub fn from_spherical(phi: f32, theta: f32) -> Self {
-        Self {
-            x: phi.cos() * theta.sin(),
-            y: phi.sin() * theta.sin(),
-            z: theta.cos()
-        }
+        let (ps, pc) = phi.sin_cos();
+        let (ts, tc) = theta.sin_cos();
+        Self::new(pc * ts, ps * ts, tc)
     }
 }
 
@@ -81,28 +99,6 @@ impl std::ops::Mul<f32> for Vec3 {
 
     fn mul(self, rhs: f32) -> Self::Output {
         Self::new(self.x * rhs, self.y * rhs, self.z * rhs)
-    }
-}
-
-impl RandomGenerator {
-    pub fn next_unit_vec3(&mut self) -> Vec3 {
-        Vec3::from_spherical(
-            2.0 * std::f32::consts::PI * self.next_unit_f32(),
-            (self.next_unit_f32() * 2.0 - 1.0).acos()
-        )
-    }
-
-    pub fn next_sphere_vec3(&mut self) -> Vec3 {
-        loop {
-            let v = Vec3::new(
-                self.next_unit_f32() * 2.0 - 1.0,
-                self.next_unit_f32() * 2.0 - 1.0,
-                self.next_unit_f32() * 2.0 - 1.0
-            );
-            if v.dot(v) <= 1.0 {
-                return v;
-            }
-        }
     }
 }
 
