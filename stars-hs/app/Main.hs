@@ -1,6 +1,6 @@
 {-|
 Module: stars-hs
-Description: 'stars' test project haskell implementation without unsafe interactions.
+Description: 'stars' test project haskell implementation.
 -}
 
 module Main where
