@@ -404,7 +404,7 @@ const Context = struct {
 };
 
 pub fn main() !void {
-    // Initialize SDL2 and defer quit
+    // Initialize SDL2 & defer quit
     _ = c.SDL_Init(c.SDL_INIT_VIDEO);
     defer c.SDL_Quit();
 

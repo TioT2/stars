@@ -320,7 +320,7 @@ cRun ctx0 = do
 
 main :: IO ()
 main = do
-  window <- createWindow (pack "stars-hs-nomem") defaultWindow
+  window <- createWindow (pack "stars-hs-fast") defaultWindow
   timer <- tInit
     <$> SR.getPerformanceFrequency
     <*> SR.getPerformanceCounter
