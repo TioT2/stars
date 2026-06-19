@@ -54,8 +54,11 @@ pub fn build(b: *std.Build) void {
     });
 
     // Link system SDL2 library (as in CMake, no wrappers required)
-    exe.linkSystemLibrary("SDL2");
-    exe.linkLibC();
+    exe.root_module.linkSystemLibrary("SDL2", .{
+        .preferred_link_mode = .dynamic,
+        .search_strategy = .no_fallback,
+    });
+    exe.root_module.linkLibC();
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
