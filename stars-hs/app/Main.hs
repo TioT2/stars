@@ -6,7 +6,7 @@ Description: 'stars' test project haskell implementation.
 module Main where
 
 import Control.Monad
-import Control.Category hiding (id)
+import Control.Category hiding (id, (.))
 import Data.Word
 import Data.Bits
 import Data.Ord
@@ -62,9 +62,6 @@ rsNextSeq rs steps gen = impl steps ([], rs) where
 
 data Vec3 a = Vec3 a a a
 
-vSplat :: a -> Vec3 a
-vSplat c = Vec3 c c c
-
 vDot :: Num a => Vec3 a -> Vec3 a -> a
 vDot (Vec3 x0 y0 z0) (Vec3 x1 y1 z1) = x0 * x1 + y0 * y1 + z0 * z1
 
@@ -72,19 +69,20 @@ vFromSpherical :: Float -> Float -> Vec3 Float
 vFromSpherical phi theta = Vec3 (pc * ts) (ps * ts) tc where
   (ps, pc, ts, tc) = (sin phi, cos phi, sin theta, cos theta)
 
-vZip :: (a -> a -> a) -> Vec3 a -> Vec3 a -> Vec3 a
-vZip f (Vec3 lx ly lz) (Vec3 rx ry rz) = Vec3 (f lx rx) (f ly ry) (f lz rz)
-
 instance Functor Vec3 where
   fmap f (Vec3 x y z) = Vec3 (f x) (f y) (f z)
 
+instance Applicative Vec3 where
+  pure c = Vec3 c c c
+  (Vec3 fx fy fz) <*> (Vec3 x y z) = Vec3 (fx x) (fy y) (fz z)
+
 instance Num a => Num (Vec3 a) where
-  (+) = vZip (+)
-  (*) = vZip (*)
+  (+) = liftA2 (+)
+  (*) = liftA2 (*)
   abs = fmap abs
   signum = fmap signum
   negate = fmap negate
-  fromInteger i = vSplat (fromInteger i)
+  fromInteger = pure . fromInteger
 
 data Timer = Timer
   { tStart :: Word64
@@ -165,7 +163,7 @@ moveStars :: RandomState -> Vec3 Float -> [Vec3 Float] -> ([Vec3 Float], RandomS
 moveStars rs delta stars = (stars' ++ nstars', rs') where
   stars' = fmap (+delta) >>> filter (\v -> vDot v v <= 1) $ stars
   (nstars, rs') = rsNextSeq rs (length stars - length stars') rsNextUnitVec3
-  nstars' = fmap (\v -> v * vSplat (signum (-vDot v delta))) nstars
+  nstars' = fmap (\v -> v * pure (signum (-vDot v delta))) nstars
 
 cHandleEvents :: [Event] -> Input -> Maybe Input
 cHandleEvents [] inp = Just inp
@@ -203,7 +201,7 @@ cUpdate ctx = do
       rot = if abs (iRot input') > 0.1
         then rotateStars (iRot input' * rotationSpeed * tDeltaTime timer')
         else id
-      sd = Vec3 (iDx input') (iDy input') 1 * vSplat ((-speed') * tDeltaTime timer')
+      sd = Vec3 (iDx input') (iDy input') 1 * pure ((-speed') * tDeltaTime timer')
       (stars', rand') = first rot $ moveStars (cRand ctx) sd (cStars ctx)
 
     return $ ctx

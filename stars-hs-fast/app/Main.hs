@@ -6,7 +6,7 @@ Description: Performance-oriented 'stars' test project haskell implementation.
 module Main where
 
 import Control.Monad
-import Control.Category hiding (id)
+import Control.Category hiding (id, (.))
 import Data.Word
 import Data.Int
 import Data.Bits
@@ -22,7 +22,7 @@ import qualified SDL.Raw as SR
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Algorithms.Intro as VA
 
-data RandomState = RandomState Word64 Word64 Word64 Word64
+data RandomState = RandomState !Word64 !Word64 !Word64 !Word64
 
 rsInit :: Word64 -> RandomState
 rsInit seed0 = RandomState (sm !! 0) (sm !! 1) (sm !! 2) (sm !! 3) where
@@ -64,10 +64,7 @@ rsNextSeq :: RandomState -> Int -> (RandomState -> (a, RandomState))
 rsNextSeq rs steps gen = impl steps ([], rs) where
   impl n (s, rs0) = if n == 0 then (s, rs0) else impl (n - 1) (first (:s) (gen rs0))
 
-data Vec3 a = Vec3 a a a
-
-vSplat :: a -> Vec3 a
-vSplat c = Vec3 c c c
+data Vec3 a = Vec3 !a !a !a
 
 vDot :: Num a => Vec3 a -> Vec3 a -> a
 vDot (Vec3 x0 y0 z0) (Vec3 x1 y1 z1) = x0 * x1 + y0 * y1 + z0 * z1
@@ -76,19 +73,20 @@ vFromSpherical :: Float -> Float -> Vec3 Float
 vFromSpherical phi theta = Vec3 (pc * ts) (ps * ts) tc where
   (ps, pc, ts, tc) = (sin phi, cos phi, sin theta, cos theta)
 
-vZip :: (a -> a -> a) -> Vec3 a -> Vec3 a -> Vec3 a
-vZip f (Vec3 lx ly lz) (Vec3 rx ry rz) = Vec3 (f lx rx) (f ly ry) (f lz rz)
-
 instance Functor Vec3 where
   fmap f (Vec3 x y z) = Vec3 (f x) (f y) (f z)
 
+instance Applicative Vec3 where
+  pure c = Vec3 c c c
+  (Vec3 fx fy fz) <*> (Vec3 x y z) = Vec3 (fx x) (fy y) (fz z)
+
 instance Num a => Num (Vec3 a) where
-  (+) = vZip (+)
-  (*) = vZip (*)
+  (+) = liftA2 (+)
+  (*) = liftA2 (*)
   abs = fmap abs
   signum = fmap signum
   negate = fmap negate
-  fromInteger i = vSplat (fromInteger i)
+  fromInteger = pure . fromInteger
 
 instance (Storable a) => Storable (Vec3 a) where
   sizeOf ~(Vec3 x _ _) = 3 * sizeOf x
@@ -100,7 +98,7 @@ instance (Storable a) => Storable (Vec3 a) where
   poke ptr (Vec3 x y z) = to 0 x >> to 1 y >> to 2 z where
     to = pokeElemOff (castPtr ptr :: Ptr a)
 
-data ScreenVec = ScreenVec Int Int Float
+data ScreenVec = ScreenVec !Int !Int !Float
 
 instance Storable ScreenVec where
     sizeOf _ = 12
@@ -196,7 +194,7 @@ moveStars :: RandomState -> Vec3 Float -> V.Vector (Vec3 Float)
 moveStars rs delta stars = (stars' V.++ nstars', rs') where
   stars' = V.map (+delta) >>> V.filter (\v -> vDot v v <= 1) $ stars
   (nstars, rs') = rsNextSeq rs (V.length stars - V.length stars') rsNextUnitVec3
-  nstars' = V.fromList $ fmap (\v -> v * vSplat (signum (-vDot v delta))) nstars
+  nstars' = V.fromList $ fmap (\v -> v * pure (signum (-vDot v delta))) nstars
 
 cHandleEvents :: [Event] -> Input -> Maybe Input
 cHandleEvents [] inp = Just inp
@@ -234,7 +232,7 @@ cUpdate ctx = do
       rot = if abs (iRot input') > 0.1
         then rotateStars (iRot input' * rotationSpeed * tDeltaTime timer')
         else id
-      sd = Vec3 (iDx input') (iDy input') 1 * vSplat ((-speed') * tDeltaTime timer')
+      sd = Vec3 (iDx input') (iDy input') 1 * pure ((-speed') * tDeltaTime timer')
       (stars', rand') = first rot $ moveStars (cRand ctx) sd (cStars ctx)
 
     return $ ctx
