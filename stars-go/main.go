@@ -254,8 +254,8 @@ func (self *Context) Render() error {
 	}
 
 	pixelFormat := surface.Format.Format
-	if pixelFormat != sdl.PIXELFORMAT_RGB888 {
-		return errors.New(fmt.Sprintf("Cannot render to 0x%04X pixel format", pixelFormat))
+	if surface.Format.BytesPerPixel != 4 {
+		return errors.New(fmt.Sprintf("Cannot render to 0x%04X pixel format, it's not 32BPP", pixelFormat))
 	}
 
 	clip := float32(0.5)

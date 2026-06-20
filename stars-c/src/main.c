@@ -263,7 +263,7 @@ void contextRender( Context *self ) {
     if (SDL_MUSTLOCK(surface) && !SDL_LockSurface(surface))
         return;
 
-    if (surface->format->format != SDL_PIXELFORMAT_RGB888)
+    if (surface->format->BytesPerPixel != 4)
         return;
 
     for (star = self->stars; star < starEnd; star++) {

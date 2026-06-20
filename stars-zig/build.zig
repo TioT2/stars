@@ -50,6 +50,7 @@ pub fn build(b: *std.Build) void {
             // definition if desireable (e.g. firmware for embedded devices).
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
@@ -58,7 +59,8 @@ pub fn build(b: *std.Build) void {
         .preferred_link_mode = .dynamic,
         .search_strategy = .no_fallback,
     });
-    exe.root_module.linkLibC();
+    // exe.root_module.linkLibC();
+    // exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default

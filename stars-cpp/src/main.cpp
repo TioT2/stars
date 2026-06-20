@@ -214,7 +214,7 @@ class context {
 
     void render( void ) {
         SDL_Surface *surface = SDL_GetWindowSurface(window_);
-        if (surface == NULL || surface->format->format != SDL_PIXELFORMAT_RGB888)
+        if (surface == NULL || surface->format->BytesPerPixel != 4)
             return;
 
         constexpr float clip = 0.5;

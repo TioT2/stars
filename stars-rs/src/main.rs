@@ -240,7 +240,7 @@ impl Context {
     pub fn render(&mut self) {
         let mut surface = self.window.surface(&self.event_pump).unwrap();
 
-        if surface.pixel_format_enum() != sdl2::pixels::PixelFormatEnum::RGB888 {
+        if surface.pixel_format_enum().byte_size_per_pixel() != 4 {
             surface.update_window().unwrap();
             return;
         }

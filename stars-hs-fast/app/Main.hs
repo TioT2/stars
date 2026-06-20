@@ -25,7 +25,7 @@ import qualified Data.Vector.Algorithms.Intro as VA
 data RandomState = RandomState Word64 Word64 Word64 Word64
 
 rsInit :: Word64 -> RandomState
-rsInit seed0 = RandomState (head sm) (sm !! 1) (sm !! 2) (sm !! 3) where
+rsInit seed0 = RandomState (sm !! 0) (sm !! 1) (sm !! 2) (sm !! 3) where
   sm = splitmix64 seed0
   splitmix64 seed = (r2 .^. (r2 .>>. 31)) : splitmix64 r0 where
     r0 = seed + 0x9E3779B97F4A7C15
@@ -255,7 +255,7 @@ cRender ctx = do
   (SurfacePixelFormat fptr) <- surfaceFormat surface
   format <- peek fptr
 
-  when (SR.pixelFormatFormat format == SR.SDL_PIXELFORMAT_RGB888) $ do
+  when (SR.pixelFormatBytesPerPixel format == 4) $ do
     V2 cSurfaceW cSurfaceH <- surfaceDimensions surface
 
     let

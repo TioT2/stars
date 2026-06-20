@@ -13,10 +13,10 @@ common warnings
 executable stars-hs
     import:           warnings
     main-is:          Main.hs
-    build-depends:    base ^>=4.18
-                    , sdl2 ^>=2.5
-                    , text ^>=2.0
-                    , vector ^>=0.13
-                    , vector-algorithms ^>=0.9
+    build-depends:    base              ^>= 4.22.0.0
+                    , sdl2              ^>= 2.5.5.1
+                    , text              ^>= 2.1.4
+                    , vector            ^>= 0.13.2.0
+                    , vector-algorithms ^>= 0.9.1.0
     hs-source-dirs:   app
     default-language: Haskell2010

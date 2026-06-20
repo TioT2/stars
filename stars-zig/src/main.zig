@@ -355,7 +355,7 @@ const Context = struct {
         if (c.SDL_MUSTLOCK(surface) and c.SDL_LockSurface(surface) == 0)
             return;
 
-        if (surface.*.format.*.format != c.SDL_PIXELFORMAT_RGB888)
+        if (surface.*.format.*.BytesPerPixel != 4)
             return;
 
         // Render!
