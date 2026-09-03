@@ -1,0 +1,10 @@
+name = "stars_julia"
+uuid = "ae42b0a0-634b-4513-8c72-683d45e34d96"
+version = "0.1.0"
+authors = ["TioT2 <piopi4112@gmail.com>"]
+
+[deps]
+SimpleDirectMediaLayer = "98e33af6-2ee5-5afd-9e75-cbc738b767c4"
+
+[compat]
+SimpleDirectMediaLayer = "0.5.0"
