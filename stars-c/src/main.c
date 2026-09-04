@@ -50,7 +50,6 @@ typedef struct Vec3_ {
     float z;
 } Vec3;
 
-/// Calculate vec3 dot product
 float vec3Dot( Vec3 lhs, Vec3 rhs ) {
     return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
 }
@@ -271,7 +270,7 @@ void contextRender( Context *self ) {
             continue;
         vt->x = halfW + xyMul * star->x / star->z;
         vt->y = halfH - xyMul * star->y / star->z;
-        // vt->x and vt->y cannot be < 0 due to their unsigned nature
+        /* vt->x and vt->y cannot be < 0 due to their unsigned nature */
         if (vt->x > surface->w - 4 || vt->y > surface->h - 4)
             continue;
         vt->d2 = vec3Dot(*star, *star);

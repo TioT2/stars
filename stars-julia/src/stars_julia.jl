@@ -286,8 +286,8 @@ function (@main)(_)
     SDL_Init(SDL_INIT_VIDEO) != 0 && return
 
     # Create in 1000x750 to counter usage of system-wide sdl2-compat by other implementations
-    window = SDL_CreateWindow("stars-julia", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1000, 750, 0)
-    # window = SDL_CreateWindow("stars-julia", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 600, 0)
+    # window = SDL_CreateWindow("stars-julia", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1000, 750, 0)
+    window = SDL_CreateWindow("stars-julia", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 600, 0)
 
     window == C_NULL && return
 
