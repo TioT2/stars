@@ -331,7 +331,7 @@ int main( void ) {
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
     SDL_Window *window = SDL_CreateWindow("stars-cpp", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 600, 0);
 
-    context(window, 8192, 47).main_loop();
+    context(window, 65536, 47).main_loop();
 
     SDL_DestroyWindow(window);
     SDL_Quit();

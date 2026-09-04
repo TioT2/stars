@@ -285,7 +285,7 @@ main = do
     <$> SR.getPerformanceFrequency
     <*> SR.getPerformanceCounter
 
-  let (stars, rand) = rsNextSeq (rsInit 47) 8192 rsNextSphereVec3
+  let (stars, rand) = rsNextSeq (rsInit 47) 65536 rsNextSphereVec3
   cRun Context
     { cWindow = window
     , cStars = stars

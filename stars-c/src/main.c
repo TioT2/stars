@@ -335,7 +335,7 @@ int main( void ) {
     inputInit(&context.input);
     timerInit(&context.timer);
 
-    context.starCount = 8192;
+    context.starCount = 65536;
     allocation = (unsigned char *)malloc(context.starCount * (sizeof(Vec3) + sizeof(Vertex)));
     if (allocation == NULL)
         goto main__deinit;

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"math"
 	"math/bits"
+	"slices"
+	"cmp"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -273,9 +275,12 @@ func (self *Context) Render() error {
 		}
 
 		xs := int32(halfW + xyMul * star.X / star.Z)
-		ys := int32(halfH - xyMul * star.Y / star.Z)
+		if xs < 0 || xs >= surface.W - 4 {
+			continue
+		}
 
-		if xs < 0 || ys < 0 || xs >= surface.W - 4 || ys >= surface.H - 4 {
+		ys := int32(halfH - xyMul * star.Y / star.Z)
+		if ys < 0 || ys >= surface.H - 4 {
 			continue
 		}
 
@@ -285,8 +290,11 @@ func (self *Context) Render() error {
 			star.Dot(star),
 		})
 	}
+	slices.SortFunc(self.projBuffer, func(l, r ScreenPoint) int {
+		return cmp.Compare(r.D2, l.D2)
+	})
 
-	surface.Lock()
+	err = surface.Lock()
 	if err != nil {
 		return err
 	}
@@ -297,7 +305,7 @@ func (self *Context) Render() error {
 	}
 	for _, pt := range self.projBuffer {
 		size := 1
-		if pt.D2 < 0.025 {
+		if pt.D2 < 0.0025 {
 			size = 4
 		} else if pt.D2 < 0.01 {
 			size = 3
@@ -373,7 +381,7 @@ func main() {
 	}
 	defer win.Destroy()
 
-	starCount := 8192
+	starCount := 65536
 	rand := NewRandomGenerator(47)
 	stars := make([]Vec3, 0, starCount)
 	projBuffer := make([]ScreenPoint, 0, starCount)

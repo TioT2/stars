@@ -411,7 +411,7 @@ pub fn main() !void {
     const window = c.SDL_CreateWindow("stars-zig", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, 800, 600, 0);
     defer c.SDL_DestroyWindow(window);
 
-    var context = try Context.init(std.heap.page_allocator, window, 8192, 47);
+    var context = try Context.init(std.heap.page_allocator, window, 65536, 47);
     defer Context.deinit(&context);
 
     context.run();

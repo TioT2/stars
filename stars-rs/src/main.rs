@@ -371,7 +371,7 @@ fn main() {
     let window = video.window("stars-rs", 800, 600).build().unwrap();
 
     let mut random = RandomGenerator::new(47);
-    let stars = (0..8192).map(|_| random.next_sphere_vec3()).collect::<Vec<Vec3>>();
+    let stars = (0..65536).map(|_| random.next_sphere_vec3()).collect::<Vec<Vec3>>();
 
     Context {
         window,

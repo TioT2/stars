@@ -152,6 +152,7 @@ mutable struct Context
     rand::RandState
     input::Input
     stars::Vector{Vec3{Float32}}
+    proj_buffer::Vector{ProjStar}
     timer::TimeCounter
     speed::Float32
 end
@@ -203,18 +204,17 @@ function render!(context::Context)
     wh_scale = sqrt(Float32(w * w + h * h) / (1 - clip * clip))
     xymul = clip * w * h / wh_scale
 
-    # Project stars and sort them
-    proj_stars::Vector{ProjStar} = []
-    sizehint!(proj_stars, length(context.stars) / 2)
+    # Clear previous projection buffer, project stars and sort them
+    empty!(context.proj_buffer)
     for s::Vec3{Float32} in context.stars
         s.z <= 0 && continue
         xs = Base.unsafe_trunc(UInt32, whalf + xymul * s.x / s.z)
         xs >= w - 4 && continue
         ys = Base.unsafe_trunc(UInt32, hhalf - xymul * s.y / s.z)
         ys >= h - 4 && continue
-        push!(proj_stars, ProjStar(xs, ys, dot(s, s)))
+        push!(context.proj_buffer, ProjStar(xs, ys, dot(s, s)))
     end
-    sort!(proj_stars, lt = (l, r) -> l.d2 > r.d2)
+    sort!(context.proj_buffer, lt = (l, r) -> l.d2 > r.d2, alg=QuickSort)
 
     pitch::Int32 = c_arrow(surface_ptr, :pitch)
     pixels::Ptr{UInt8} = convert(Ptr{UInt8}, c_arrow(surface_ptr, :pixels))
@@ -223,7 +223,7 @@ function render!(context::Context)
     Base.memset(pixels, 0, pitch * h)
 
     # Render!
-    for s in proj_stars
+    for s in context.proj_buffer
         size = if s.d2 < 0.0025 4
         elseif s.d2 < 0.01 3
         elseif s.d2 < 0.09 2
@@ -292,13 +292,16 @@ function (@main)(_)
     window == C_NULL && return
 
     rand = RandState(UInt64(47))
-    stars = [rand_sphere_vec3!(rand) for _ in 1:8192]
+    stars = [rand_sphere_vec3!(rand) for _ in 1:65536]
+    proj_buffer = ProjStar[]
+    sizehint!(proj_buffer, length(stars))
 
     run!(Context(
         window,
         rand,
         Input(),
         stars,
+        proj_buffer,
         TimeCounter(),
         0.47
     ))
