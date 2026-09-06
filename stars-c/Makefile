@@ -9,7 +9,7 @@ SRCS=$(wildcard $(SRCDIR)/*.c)
 OBJS=$(patsubst $(SRCDIR)/%.c, $(OUTDIR)/%.o, $(SRCS))
 DEPS=$(patsubst $(SRCDIR)/%.c, $(OUTDIR)/%.d, $(SRCS))
 
-CFLAGS:=-std=c89 -g -MMD -O3 $(shell pkg-config --cflags sdl2)
+CFLAGS:=-std=c89 -MMD -O3 $(shell pkg-config --cflags sdl2)
 LDFLAGS:=$(shell pkg-config --libs sdl2) -lm
 
 all: $(OUTDIR)/$(APP)

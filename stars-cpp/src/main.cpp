@@ -145,10 +145,10 @@ public:
 };
 
 struct input {
-    float acceleration = 0.0;
-    float rotation = 0.0;
-    float move_x = 0.0;
-    float move_y = 0.0;
+    float acceleration = 0.0f;
+    float rotation = 0.0f;
+    float move_x = 0.0f;
+    float move_y = 0.0f;
 
     input compose( input rhs ) const {
         return input {
@@ -223,6 +223,7 @@ class context {
         float wh_scale = std::sqrt((surface->w * surface->w + surface->h * surface->h) / (1.0f - clip * clip));
         float xy_mul = clip * surface->w * surface->h / wh_scale;
 
+        vertex_buffer_.clear();
         for (auto star : stars_) {
             if (star.z <= 0.0f)
                 continue;
@@ -245,23 +246,15 @@ class context {
         std::memset(surface->pixels, 0, surface->pitch * surface->h);
 
         for (auto &v : vertex_buffer_) {
-            int size = v.d2 < 0.0025 ? 4 : v.d2 < 0.01 ? 3 : v.d2 < 0.09 ? 2 : 1;
-
-            std::uint32_t color = (std::uint8_t)(255.0f * (1.0f - v.d2));
-            color |= color << 8;
-            color |= color << 16;
+            int size = v.d2 < 0.0025f ? 4 : v.d2 < 0.01f ? 3 : v.d2 < 0.09f ? 2 : 1;
+            std::uint8_t color = 255.0f * (1.0f - v.d2);
 
             std::byte *ptr = (std::byte *)surface->pixels + v.y * surface->pitch + v.x * 4;
             for (int y = 0; y < size; y++) {
-                for (int x = 0; x < size; x++) {
-                    std::memcpy(ptr, &color, 4);
-                    ptr += 4;
-                }
-                ptr += surface->pitch - size * 4;
+                std::memset(ptr, color, size * 4);
+                ptr += surface->pitch;
             }
         }
-
-        vertex_buffer_.clear();
 
         if (SDL_MUSTLOCK(surface))
             SDL_UnlockSurface(surface);

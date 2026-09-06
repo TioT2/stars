@@ -11,10 +11,6 @@ pub fn vectorDot(lhs: Vector, rhs: Vector) f32 {
     return prod[0] + prod[1] + prod[2];
 }
 
-pub fn vectorMulF(lhs: Vector, val: f32) Vector {
-    return lhs * @as(Vector, @splat(val));
-}
-
 pub fn vectorFromSpherical(phi: f32, theta: f32) Vector {
     return Vector{
         std.math.cos(phi) * std.math.sin(theta),
@@ -32,11 +28,11 @@ const RandomGenerator = struct {
     const Self = @This();
 
     fn splitMix64(state: *u64) u64 {
-        var r: u64 = @addWithOverflow(state.*, 0x9E3779B97F4A7C15)[0];
+        var r: u64 = state.* +% 0x9E3779B97F4A7C15;
         state.* = r;
 
-        r = @addWithOverflow(r ^ (r >> 30), 0xBF58476D1CE4E5B9)[0];
-        r = @addWithOverflow(r ^ (r >> 27), 0x94D049BB133111EB)[0];
+        r = (r ^ (r >> 30)) +% 0xBF58476D1CE4E5B9;
+        r = (r ^ (r >> 27)) +% 0x94D049BB133111EB;
         return r ^ (r >> 31);
     }
 
@@ -52,10 +48,7 @@ const RandomGenerator = struct {
     }
 
     pub fn randomU64(self: *Self) u64 {
-        const result = @addWithOverflow(
-            self.s0,
-            std.math.rotl(u64, @addWithOverflow(self.s0, self.s3)[0], 23),
-        )[0];
+        const result = self.s0 +% std.math.rotl(u64, self.s0 +% self.s3, 23);
         const temp = self.s1 << 17;
 
         self.s2 ^= self.s0;
@@ -263,7 +256,7 @@ const Context = struct {
             star.* = star.* + offset;
             if (vectorDot(star.*, star.*) > 1) {
                 star.* = self.random.randomUnitVec3();
-                star.* = vectorMulF(star.*, -std.math.sign(vectorDot(star.*, offset)));
+                star.* = star.* * @as(Vector, @splat(-std.math.sign(vectorDot(star.*, offset))));
             }
         }
     }
@@ -279,10 +272,8 @@ const Context = struct {
         self.speed += self.timer.delta_time * self.input.acceleration * acceleration_speed;
         if (@abs(self.input.rotation) > 0.1)
             self.rotateStars(rotation_speed * self.input.rotation * self.timer.delta_time);
-        self.moveStars(vectorMulF(
-            Vector{ self.input.move_x, self.input.move_y, 1 },
-            -self.speed * self.timer.delta_time,
-        ));
+        self.moveStars(Vector{ self.input.move_x, self.input.move_y, 1 }
+            * @as(Vector, @splat(-self.speed * self.timer.delta_time)));
     }
 
     // Build star vertex buffer
