@@ -1,6 +1,5 @@
 module stars
     use iso_fortran_env
-    use iso_c_binding
     use sdl2
     implicit none
 
@@ -26,22 +25,10 @@ module stars
     end type input_t
 
     ! c-compatible projection star for being successfully qsort-ed
-    type, bind(c) :: proj_star_t
-        integer(kind=c_int32_t) :: x, y
-        real(kind=c_float) :: d2
+    type :: proj_star_t
+        integer :: x, y
+        real :: d2
     end type proj_star_t
-
-    ! explicitly bind c qsort function
-    interface
-        subroutine qsort(array, elem_count, elem_size, compare) &
-            bind(c, name="qsort")
-            import :: c_ptr, c_size_t, c_funptr
-            type(c_ptr), value :: array
-            integer(c_size_t), value :: elem_count
-            integer(c_size_t), value :: elem_size
-            type(c_funptr), value :: compare
-        end subroutine qsort
-    end interface
 
 contains
     pure function input_compose_csum(l, r) result(o)
@@ -59,16 +46,45 @@ contains
         o%dy = input_compose_csum(l%dy, r%dy)
     end function input_compose
 
-    function compare_proj_stars(l, r) result(cmp) bind(c)
-        type(c_ptr), value :: l, r
-        type(proj_star_t), pointer :: lv, rv
-        integer(c_int) :: cmp
+    recursive subroutine sort_proj_stars(stars)
+        type(proj_star_t), intent(inout), contiguous :: stars(:)
+        type(proj_star_t) :: pivot, temp
+        integer :: l, r, part_index
 
-        call c_f_pointer(l, lv)
-        call c_f_pointer(r, rv)
+        ! check array size
+        if (size(stars) < 2) return
 
-        cmp = (lv%d2 > rv%d2 ? -1 : 1)
-    end function compare_proj_stars
+        ! partition
+        pivot = stars((1 + size(stars)) / 2)
+        l = 1
+        r = size(stars)
+
+        do
+            do while (stars(l)%d2 > pivot%d2)
+                l = l + 1
+            end do
+
+            do while (stars(r)%d2 < pivot%d2)
+                r = r - 1
+            end do
+
+            if (l >= r) then
+                part_index = r
+                exit
+            end if
+
+            temp = stars(l)
+            stars(l) = stars(r)
+            stars(r) = temp
+
+            l = l + 1
+            r = r - 1
+        end do
+
+        ! recursion
+        call sort_proj_stars(stars(:part_index))
+        call sort_proj_stars(stars(part_index + 1:))
+    end subroutine sort_proj_stars
 
     pure function input_from_key(key, v) result(inp)
         integer(kind=c_int), intent(in), value :: key
@@ -144,7 +160,7 @@ contains
     end subroutine timer_update
 
     subroutine rotate_stars(stars, angle)
-        type(vec3_t), intent(inout) :: stars(:)
+        type(vec3_t), intent(inout), contiguous :: stars(:)
         real, intent(in), value :: angle
         real :: sina, cosa, x, z
         integer :: i
@@ -153,16 +169,15 @@ contains
         cosa = cos(angle)
 
         do i = 1, size(stars)
-            x = stars(i)%z * sina + stars(i)%x * cosa
-            z = stars(i)%z * cosa - stars(i)%x * sina
-
-            stars(i)%x = x
-            stars(i)%z = z
+            stars(i) = vec3_t(&
+                stars(i)%z * sina + stars(i)%x * cosa,&
+                stars(i)%y,&
+                stars(i)%z * cosa - stars(i)%x * sina)
         end do
     end subroutine rotate_stars
 
     subroutine move_stars(stars, rand, delta)
-        type(vec3_t), intent(inout) :: stars(:)
+        type(vec3_t), intent(inout), contiguous :: stars(:)
         type(random_t), intent(inout) :: rand
         type(vec3_t), intent(in), value :: delta
         type(vec3_t) :: s
@@ -293,13 +308,6 @@ contains
 end module stars
 
 program main
-    use sdl2
-    use sdl2_video
-    use sdl2_surface
-    use sdl2_timer
-    use iso_c_binding
-    use iso_fortran_env
-
     use stars
     implicit none
 
@@ -387,6 +395,7 @@ program main
 
         ! rendering
         block
+            integer, parameter :: star_scale = 1
             integer :: upd, locked
             type(sdl_surface), pointer :: surface
             type(sdl_pixel_format), pointer :: pixel_format
@@ -415,46 +424,46 @@ program main
 
             ! projection
             proj_i = 1
-            do i = 1, size(star_buffer)
-                block
-                    type(vec3_t) :: s
-                    type(proj_star_t) :: pt
 
+            block
+                type(vec3_t) :: s
+                type(proj_star_t) :: pt
+                do i = 1, size(star_buffer)
                     s = star_buffer(i)
                     if (s%z <= 0) cycle
 
                     pt%x = int(half_w + xy_mul * s%x / s%z)
-                    if (pt%x < 0 .or. pt%x > surface%w - 4) cycle
+                    if (pt%x < 0 .or. pt%x > surface%w - 4 * star_scale) cycle
 
                     pt%y = int(half_h - xy_mul * s%y / s%z)
-                    if (pt%y < 0 .or. pt%y > surface%h - 4) cycle
+                    if (pt%y < 0 .or. pt%y > surface%h - 4 * star_scale) cycle
 
                     pt%d2 = vec3_dot(s, s)
                     proj_buffer(proj_i) = pt
                     proj_i = proj_i + 1
-                end block
-            end do
+                end do
+            end block
 
-            ! sort projection buffer
-            call qsort(c_loc(proj_buffer(1)), int(proj_i - 1, kind=c_size_t), &
-                c_sizeof(proj_buffer(1)), c_funloc(compare_proj_stars))
+            call sort_proj_stars(proj_buffer(1:proj_i - 1))
 
-            ! capture c pointer
+            ! capture surface C pointer
             call c_f_pointer(surface%pixels, pixels, &
                 [surface%pitch * surface%h])
 
             pixels = 0u
 
             ! rendering
-            do i = 1, proj_i - 1
-                block
-                    type(proj_star_t) :: star
-                    unsigned(kind=uint8) :: color
-                    integer :: y, off, size
+            block
+                type(proj_star_t) :: star
+                unsigned(kind=uint8) :: color
+                integer :: y, off, size
+
+                do i = 1, proj_i - 1
 
                     star = proj_buffer(i)
                     size = (star%d2 < 0.0025 ? 4 : star%d2 < 0.01 ? 3 : &
                         star%d2 < 0.09 ? 2 : 1)
+                    size = size * star_scale
 
                     ! rendering loop
                     color = uint(255.0 * (1.0 - star%d2))
@@ -463,8 +472,8 @@ program main
                         pixels(off : off + size * 4) = color
                         off = off + surface%pitch
                     end do
-                end block
-            end do
+                end do
+            end block
 
             call sdl_unlock_surface(surface)
             upd = sdl_update_window_surface(window)
