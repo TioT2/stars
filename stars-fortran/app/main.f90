@@ -21,18 +21,20 @@ module stars
         real :: x, y, z
     end type vec3_t
 
-    ! c-compatible projection star for being successfully c_qsort-ed
+    type :: input_t
+        real :: rot = 0, acc = 0, dx = 0, dy = 0
+    end type input_t
+
+    ! c-compatible projection star for being successfully qsort-ed
     type, bind(c) :: proj_star_t
         integer(kind=c_int32_t) :: x, y
         real(kind=c_float) :: d2
     end type proj_star_t
 
-    type :: input_t
-        real :: rot = 0, acc = 0, dx = 0, dy = 0
-    end type input_t
-
+    ! explicitly bind c qsort function
     interface
-        subroutine qsort(array, elem_count, elem_size, compare) bind(c, name="qsort")
+        subroutine qsort(array, elem_count, elem_size, compare) &
+            bind(c, name="qsort")
             import :: c_ptr, c_size_t, c_funptr
             type(c_ptr), value :: array
             integer(c_size_t), value :: elem_count
@@ -43,7 +45,7 @@ module stars
 
 contains
     pure function input_compose_csum(l, r) result(o)
-        type(real), intent(in) :: l, r
+        type(real), intent(in), value :: l, r
         type(real) :: o
         o = max(-1.0, min(1.0, l + r))
     end function input_compose_csum
@@ -69,8 +71,8 @@ contains
     end function compare_proj_stars
 
     pure function input_from_key(key, v) result(inp)
-        integer(kind=c_int), intent(in) :: key
-        real, intent(in) :: v
+        integer(kind=c_int), intent(in), value :: key
+        real, intent(in), value :: v
         type(input_t) :: inp
 
         select case (key)
@@ -111,7 +113,7 @@ contains
 
     pure function timer_dt(tm, beg, end) result(dt)
         type(timer_t), intent(in) :: tm
-        integer(kind=int64), intent(in) :: beg, end
+        integer(kind=int64), intent(in), value :: beg, end
         real :: dt
 
         dt = real(end - beg) / tm%freq
@@ -143,9 +145,10 @@ contains
 
     subroutine rotate_stars(stars, angle)
         type(vec3_t), intent(inout) :: stars(:)
-        real, intent(in) :: angle
+        real, intent(in), value :: angle
         real :: sina, cosa, x, z
         integer :: i
+
         sina = sin(angle)
         cosa = cos(angle)
 
@@ -161,7 +164,7 @@ contains
     subroutine move_stars(stars, rand, delta)
         type(vec3_t), intent(inout) :: stars(:)
         type(random_t), intent(inout) :: rand
-        type(vec3_t), intent(in) :: delta
+        type(vec3_t), intent(in), value :: delta
         type(vec3_t) :: s
         integer :: i
 
@@ -178,7 +181,7 @@ contains
     end subroutine move_stars
 
     pure function vec3_add(l, r) result(o)
-        type(vec3_t), intent(in) :: l, r
+        type(vec3_t), intent(in), value :: l, r
         type(vec3_t) :: o
 
         o%x = l%x + r%x
@@ -186,32 +189,24 @@ contains
         o%z = l%z + r%z
     end function vec3_add
 
-    pure function vec3_splat(c) result(v)
-        real, intent(in) :: c
-        type(vec3_t) :: v
-
-        v%x = c
-        v%y = c
-        v%z = c
-    end function vec3_splat
-
     pure function vec3_dot(l, r) result(d)
-        type(vec3_t), intent(in) :: l, r
+        type(vec3_t), intent(in), value :: l, r
         real :: d
 
         d = l%x * r%x + l%y * r%y + l%z * r%z
     end function vec3_dot
 
     pure function vec3_neg(v) result(n)
-        type(vec3_t), intent(in) :: v
+        type(vec3_t), intent(in), value :: v
         type(vec3_t) :: n
+
         n%x = -v%x
         n%y = -v%y
         n%z = -v%z
     end function vec3_neg
 
     pure function vec3_from_spherical(phi, theta) result(v)
-        real, intent(in) :: phi, theta
+        real, intent(in), value :: phi, theta
         type(vec3_t) :: v
 
         v%x = cos(phi) * sin(theta)
@@ -231,9 +226,10 @@ contains
     end function splitmix64
 
     function make_random(seed) result(r)
-        unsigned(kind=uint64), intent(in) :: seed
+        unsigned(kind=uint64), intent(in), value :: seed
         unsigned(kind=uint64) :: state
         type(random_t) :: r
+
         state = seed
         r%v0 = splitmix64(state)
         r%v1 = splitmix64(state)
@@ -260,12 +256,15 @@ contains
     function random_next_unit_real8(r) result(res)
         type(random_t), intent(inout) :: r
         real(kind = 8) :: res
-        res = real(random_next_uint64(r), kind=8) / real(uint(z'FFFFFFFFFFFFFFFF', kind = 8), kind = 8)
+
+        res = real(random_next_uint64(r), kind=8) / &
+            real(uint(z'FFFFFFFFFFFFFFFF', kind = 8), kind = 8)
     end function random_next_unit_real8
 
     function random_next_unit_real(r) result(res)
         type(random_t), intent(inout) :: r
         real :: res
+
         res = real(random_next_unit_real8(r), kind=4)
     end function random_next_unit_real
 
@@ -274,6 +273,7 @@ contains
         real, parameter :: pi = 4.0d0 * atan(1.0d0)
         real :: k1, k2
         type(vec3_t) :: res
+
         k1 = random_next_unit_real(r)
         k2 = random_next_unit_real(r)
         res = vec3_from_spherical(2 * pi * k1, acos(2 * k2 - 1))
@@ -282,6 +282,7 @@ contains
     function random_next_sphere_vec3(r) result(res)
         type(random_t), intent(inout) :: r
         type(vec3_t) :: res
+
         do
             res%x = random_next_unit_real(r) * 2 - 1
             res%y = random_next_unit_real(r) * 2 - 1
@@ -315,22 +316,19 @@ program main
     type(proj_star_t), allocatable, target :: proj_buffer(:)
     real :: movement_speed
 
+    ! SDL initialization
     init = sdl_init(SDL_INIT_VIDEO)
-    if (init /= 0) then
-        write (error_unit, *) "window initialization failed: ", sdl_get_error()
-        stop
-    end if
+    if (init /= 0) stop
 
     window = sdl_create_window("stars-fortran" // c_null_char, &
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 600, 0)
 
     if (.not. c_associated(window)) then
-        write (error_unit, *) "cannot create window: ", sdl_get_error()
         call sdl_quit()
         stop
     end if
 
-    ! initialize everything
+    ! context initialization
     allocate(star_buffer(65536))
     allocate(proj_buffer(size(star_buffer)))
     timer = make_timer()
@@ -345,7 +343,8 @@ program main
     ! main loop
     main_loop = .true.
     do while (main_loop)
-        ! event loop
+
+        ! event handling
         block
             type(sdl_event) :: event
 
@@ -363,18 +362,16 @@ program main
             end do
         end block
 
-        ! timer update
-        call timer_update(timer)
-
-        if (timer_fps_is_new(timer)) then
-            write (*, '("FPS: ", G0)') timer%fps
-        end if
-
-
-        ! control
+        ! simulation state update
         block
             real, parameter :: acc_speed = 1, rot_speed = 1
             type(vec3_t) :: offset
+
+            call timer_update(timer)
+
+            if (timer_fps_is_new(timer)) then
+                write (*, '("FPS: ", G0)') timer%fps
+            end if
 
             movement_speed = movement_speed + timer%dt * input%acc * acc_speed
 
@@ -399,30 +396,21 @@ program main
 
             surface => sdl_get_window_surface(window)
 
-            if (.not. associated(surface)) then
-                write (error_unit, *) "cannot access window surface: ", &
-                    sdl_get_error()
-                cycle
-            end if
+            if (.not. associated(surface)) cycle
 
             call c_f_pointer(surface%format, pixel_format)
-            if (pixel_format%bytes_per_pixel /= 4) then
-                write (error_unit, *) "window surface bpp must be 4, but is ", &
-                    pixel_format%bytes_per_pixel
-                cycle
-            end if
+            if (pixel_format%bytes_per_pixel /= 4) cycle
 
             locked = sdl_lock_surface(surface)
-            if (locked /= 0) then
-                write (error_unit, *) "cannot lock surface: ", sdl_get_error()
-                cycle
-            end if
+            if (locked /= 0) cycle
 
             clip = 0.5
             half_w = real(surface%w) / 2.0
             half_h = real(surface%h) / 2.0
-            wh_scale = sqrt(real(surface%w * surface%w + surface%h * surface%h) &
-                / (1.0 * clip * clip))
+
+            wh_scale = sqrt(&
+                real(surface%w * surface%w + surface%h * surface%h) &
+                / (1.0 - clip * clip))
             xy_mul = clip * real(surface%w * surface%h) / wh_scale
 
             ! projection
@@ -452,7 +440,8 @@ program main
                 c_sizeof(proj_buffer(1)), c_funloc(compare_proj_stars))
 
             ! capture c pointer
-            call c_f_pointer(surface%pixels, pixels, [surface%pitch * surface%h])
+            call c_f_pointer(surface%pixels, pixels, &
+                [surface%pitch * surface%h])
 
             pixels = 0u
 
@@ -464,21 +453,14 @@ program main
                     integer :: y, off, size
 
                     star = proj_buffer(i)
-                    if (star%d2 < 0.0025) then
-                        size = 4
-                    else if (star%d2 < 0.01) then
-                        size = 3
-                    else if (star%d2 < 0.09) then
-                        size = 2
-                    else
-                        size = 1
-                    end if
+                    size = (star%d2 < 0.0025 ? 4 : star%d2 < 0.01 ? 3 : &
+                        star%d2 < 0.09 ? 2 : 1)
 
                     ! rendering loop
                     color = uint(255.0 * (1.0 - star%d2))
                     off = star%y * surface%pitch + star%x * 4 + 4
                     do y = 1, size
-                        pixels(off:off + size * 4) = color
+                        pixels(off : off + size * 4) = color
                         off = off + surface%pitch
                     end do
                 end block
